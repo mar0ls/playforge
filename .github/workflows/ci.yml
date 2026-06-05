@@ -7,7 +7,7 @@ name: CI
 # quoted so YAML 1.1 doesn't read `on` as the boolean true
 "on":
   push:
-    branches: [main, master, dev]
+    branches: [main, dev]
     tags: ["v*"]          # tagging a release re-runs the suite, so releases are green
   pull_request:           # every PR shows a green/red check before merge
   workflow_dispatch:      # manual run button
