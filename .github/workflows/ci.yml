@@ -1,0 +1,43 @@
+name: CI
+
+# Runs the full test suite the same way `make test` does locally: inside the
+# built image, so heavy tests (git, ansible-doc, baked Galaxy collections) really
+# run instead of being skipped. The same file works under Gitea/Forgejo Actions —
+# it's the same runner engine and action set.
+# quoted so YAML 1.1 doesn't read `on` as the boolean true
+"on":
+  push:
+    branches: [main, master]
+    tags: ["v*"]          # tagging a release re-runs the suite, so releases are green
+  pull_request:           # every PR shows a green/red check before merge
+  workflow_dispatch:      # manual run button
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app image
+        run: docker build -t ansible-gui:dev ./backend
+
+      - name: Run test suite in image
+        run: |
+          docker run --rm \
+            -v "$PWD/backend/tests:/app/tests:ro" \
+            -v "$PWD/backend/pytest.ini:/app/pytest.ini:ro" \
+            -v "$PWD/backend/requirements-dev.txt:/app/requirements-dev.txt:ro" \
+            ansible-gui:dev \
+            sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest -p no:cacheprovider --color=yes"
+
+  # Fast lint of the workflow + a quick syntax check, independent of the image build,
+  # so obvious Python syntax errors fail in seconds without waiting for Docker.
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile all backend modules
+        run: python -m compileall -q backend/app

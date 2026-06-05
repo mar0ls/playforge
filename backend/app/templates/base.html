@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Playforge{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <style>
+    .ai-fab { position: fixed; bottom: 20px; right: 20px; width: 54px; height: 54px;
+      border-radius: 50%; border: 1px solid #2f81f7; background: #1f6feb; color: #fff;
+      font-size: 22px; cursor: pointer; z-index: 1000; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+    .ai-fab:hover { background: #2f81f7; }
+    .ai-dock { position: fixed; bottom: 86px; right: 20px; width: min(460px, 94vw);
+      height: min(70vh, 640px); display: flex; flex-direction: column; z-index: 1000;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.5); overflow: hidden; }
+    .ai-dock-head { display: flex; align-items: center; gap: .5rem; padding: .5rem .75rem;
+      border-bottom: 1px solid #30363d; background: #161b22; }
+    .ai-dock-log { flex: 1; overflow-y: auto; padding: .6rem; display: flex; flex-direction: column; gap: .5rem; }
+    .ai-msg { padding: .45rem .65rem; border-radius: 8px; max-width: 92%; line-height: 1.4; font-size: .92rem; }
+    .ai-msg.user { align-self: flex-end; background: rgba(47,129,247,.14); border: 1px solid rgba(47,129,247,.3); }
+    .ai-msg.assistant { align-self: flex-start; background: #161b22; border: 1px solid #30363d; }
+    .ai-dock-input { display: flex; gap: .4rem; padding: .5rem; border-top: 1px solid #30363d; }
+    .ai-dock-input textarea { flex: 1; resize: none; }
+    .ai-dock-save { margin: 0 .5rem .5rem; padding: .5rem; }
+    /* Rendered Markdown (chat prose + runbook) */
+    .md-body { line-height: 1.5; }
+    .md-body h1,.md-body h2,.md-body h3,.md-body h4 { margin: .6rem 0 .3rem; line-height: 1.25; }
+    .md-body h1 { font-size: 1.3rem; } .md-body h2 { font-size: 1.15rem; } .md-body h3 { font-size: 1.05rem; }
+    .md-body p { margin: .4rem 0; }
+    .md-body ul,.md-body ol { margin: .3rem 0; padding-left: 1.4rem; }
+    .md-body li { margin: .15rem 0; }
+    .md-body code { background: rgba(110,118,129,.18); padding: .1em .35em; border-radius: 4px; font-size: .9em; }
+    .md-body pre.md-code { background: #0b0f14; border: 1px solid #30363d; border-radius: 6px; padding: .6rem; overflow-x: auto; }
+    .md-body pre.md-code code { background: none; padding: 0; }
+    .md-body blockquote { border-left: 3px solid #30363d; margin: .4rem 0; padding: .1rem .7rem; color: var(--muted,#8b949e); }
+    .md-body a { color: var(--accent,#58a6ff); }
+    .md-body hr { border: 0; border-top: 1px solid #30363d; margin: .6rem 0; }
+  </style>
+  <!-- Core UI libraries are vendored locally; Monaco is loaded separately in project.html. -->
+  <script src="/static/vendor/md.js"></script>
+  <script src="/static/vendor/htmx-2.0.3.min.js"></script>
+  <script defer src="/static/vendor/alpine-3.14.1.min.js"></script>
+  <script src="/static/vendor/lucide-1.17.0.min.js"></script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">P</span>
+      <span>Playforge</span>
+    </div>
+    <nav>
+      <a href="/assistant" class="{% if active_nav == 'assistant' %}active{% endif %}">
+        <i class="icon" data-lucide="sparkles"></i> Assistant
+      </a>
+      <a href="/" class="{% if active_nav == 'dashboard' %}active{% endif %}">
+        <i class="icon" data-lucide="layout-dashboard"></i> Dashboard
+      </a>
+      <a href="/projects" class="{% if active_nav == 'projects' %}active{% endif %}">
+        <i class="icon" data-lucide="folder-git-2"></i> Projects
+      </a>
+      <a href="/runs" class="{% if active_nav == 'runs' %}active{% endif %}">
+        <i class="icon" data-lucide="play-circle"></i> Runs
+      </a>
+
+      <div class="section-label">Inventory & secrets</div>
+      <a href="/credentials" class="{% if active_nav == 'credentials' %}active{% endif %}">
+        <i class="icon" data-lucide="key-round"></i> Credentials
+      </a>
+      <a href="/schedules" class="{% if active_nav == 'schedules' %}active{% endif %}">
+        <i class="icon" data-lucide="calendar-clock"></i> Schedules
+      </a>
+
+      <div class="section-label">System</div>
+      <a href="/settings" class="{% if active_nav == 'settings' %}active{% endif %}">
+        <i class="icon" data-lucide="settings"></i> Settings
+      </a>
+    </nav>
+    <div class="spacer"></div>
+    {% if auth_enabled() %}
+    <form method="post" action="/logout" style="margin: 0 0 .4rem;">
+      <button type="submit" class="btn-ghost btn-sm" style="width:100%;">
+        <i class="icon" data-lucide="log-out"></i> Logout
+      </button>
+    </form>
+    {% endif %}
+    <div class="footer-note">
+      v0.1 &middot; <span class="muted">{% if auth_enabled() %}protected{% else %}single-user mode{% endif %}</span>
+    </div>
+  </aside>
+
+  <header class="header" x-data>
+    <div class="breadcrumb">
+      {% block breadcrumb %}<span>{{ page_title or 'Dashboard' }}</span>{% endblock %}
+    </div>
+    <div class="actions">
+      {% block header_actions %}{% endblock %}
+    </div>
+  </header>
+
+  <main class="content">
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+</div>
+<!-- Global slide-out AI assistant: available on every page, aware of the current project -->
+<div x-data="chatDock()" x-init="init()">
+  <button class="ai-fab" x-show="aiEnabled !== false" @click="toggle()"
+          :title="open ? 'Close assistant' : 'Ask the assistant'" x-text="open ? '✕' : '✨'"></button>
+
+  <div class="ai-dock" x-show="open" x-cloak>
+    <div class="ai-dock-head">
+      <strong>✨ Assistant</strong>
+      <span class="text-xs muted" x-show="projectId">· project <span class="font-mono" x-text="projectId"></span></span>
+      <span style="flex:1"></span>
+      <a href="/assistant" class="btn-ghost btn-sm" title="Open full page">⤢</a>
+      <button class="btn-ghost btn-sm" @click="open=false">✕</button>
+    </div>
+
+    <div class="ai-dock-log" x-ref="log">
+      <template x-if="messages.length === 0">
+        <div class="muted text-sm" style="padding:.4rem;">
+          Tell me what you want to do — generate a playbook, fix an error, explain a module.
+          Code blocks get <strong>Copy</strong> and <strong>Save to project</strong>.
+        </div>
+      </template>
+      <template x-for="(m, i) in messages" :key="i">
+        <div :class="`ai-msg ${m.role}`">
+          <template x-for="(seg, j) in segments(m.content)" :key="j">
+            <div>
+              <template x-if="seg.type === 'code'">
+                <div>
+                  <pre class="log" style="margin:.3rem 0;" x-text="seg.text"></pre>
+                  <div class="row gap-sm" style="margin:-.1rem 0 .3rem;">
+                    <button class="btn-ghost btn-sm" @click="copy(seg.text)">Copy</button>
+                    <button class="btn-ghost btn-sm" @click="openSave(seg.text)">Save to project…</button>
+                  </div>
+                </div>
+              </template>
+              <div x-show="seg.type === 'text'" class="md-body" x-html="renderMarkdown(seg.text)"></div>
+            </div>
+          </template>
+          <template x-if="m.issues && m.issues.length">
+            <div class="text-xs" style="border-top:1px solid #30363d; padding-top:.3rem; margin-top:.3rem;">
+              <strong>🛡️ Rule check:</strong>
+              <template x-for="iss in m.issues" :key="iss.message">
+                <div :style="iss.severity === 'error' ? 'color:var(--fail,#f85149)' : 'color:var(--warn,#d29922)'" x-text="iss.message"></div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+      <div class="ai-msg assistant muted" x-show="busy">thinking…</div>
+    </div>
+
+    <div class="ai-dock-save card" x-show="saveDialog" x-cloak>
+      <div class="form-row" x-show="projects.length">
+        <select x-model="saveDialog.project">
+          <template x-for="p in projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+        </select>
+        <input type="text" x-model="saveDialog.path" placeholder="playbooks/from-assistant.yml">
+      </div>
+      <div class="text-sm muted" x-show="!projects.length">No projects yet to save into.</div>
+      <div class="row gap-sm mt-1">
+        <button class="btn-sm" @click="saveSnippet()" :disabled="saving || !saveDialog.project || !saveDialog.path" x-show="projects.length">Save</button>
+        <button class="btn-secondary btn-sm" @click="saveDialog=null">Cancel</button>
+        <span class="text-xs" :class="saveMsgClass" x-text="saveMsg"></span>
+      </div>
+    </div>
+
+    <form class="ai-dock-input" @submit.prevent="send()">
+      <textarea x-model="input" rows="2" placeholder="Ask…  (Enter to send, Shift+Enter for newline)"
+                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); send(); }"></textarea>
+      <button type="submit" :disabled="busy || !input.trim()">➤</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => lucide.createIcons());
+  document.addEventListener("alpine:initialized", () => lucide.createIcons());
+
+  function chatDock() {
+    return {
+      open: false, aiEnabled: null, projectId: null, projects: [],
+      messages: [], input: "", busy: false,
+      saveDialog: null, saving: false, saveMsg: "", saveMsgClass: "muted",
+      async init() {
+        const m = location.pathname.match(/\/projects\/([^/]+)/);
+        this.projectId = (m && m[1] !== "") ? m[1] : null;
+        const s = await fetch("/api/ai/status").then(r => r.ok ? r.json() : {enabled: false}).catch(() => ({enabled: false}));
+        this.aiEnabled = !!s.enabled;
+        this.projects = await fetch("/api/projects").then(r => r.ok ? r.json() : []).catch(() => []);
+      },
+      toggle() { this.open = !this.open; this.scroll(); },
+      segments(c) {
+        const out = []; (c || "").split("```").forEach((p, i) => {
+          if (i % 2 === 1) out.push({type: "code", text: p.replace(/^[a-z0-9_-]*\n/i, "")});
+          else if (p.trim()) out.push({type: "text", text: p.trim()});
+        });
+        return out.length ? out : [{type: "text", text: c || ""}];
+      },
+      scroll() { this.$nextTick(() => { const l = this.$refs.log; if (l) l.scrollTop = l.scrollHeight; }); },
+      async send() {
+        const t = this.input.trim(); if (!t || this.busy) return;
+        this.messages.push({role: "user", content: t}); this.input = ""; this.busy = true; this.scroll();
+        try {
+          const r = await fetch("/api/ai/chat", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({messages: this.messages.map(m => ({role: m.role, content: m.content})), project_id: this.projectId}),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) { this.messages.push({role: "assistant", content: "⚠️ " + (d.detail || "request failed")}); return; }
+          this.messages.push({role: "assistant", content: d.reply || "(empty response)",
+                              issues: (d.validation && d.validation.playbook_issues) || []});
+        } finally { this.busy = false; this.scroll(); }
+      },
+      copy(text) {
+        if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text); return; }
+        const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e) {} document.body.removeChild(ta);
+      },
+      openSave(content) {
+        this.saveMsg = "";
+        this.saveDialog = {content, project: this.projectId || ((this.projects[0] || {}).id) || "", path: "playbooks/from-assistant.yml"};
+      },
+      async saveSnippet() {
+        if (!this.saveDialog || this.saving) return;
+        this.saving = true; this.saveMsg = "";
+        try {
+          const r = await fetch(`/api/projects/${this.saveDialog.project}/file`, {
+            method: "PUT", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({path: this.saveDialog.path, content: this.saveDialog.content, message: "Add snippet from assistant"}),
+          });
+          if (!r.ok) { this.saveMsg = (await r.text()) || "save failed"; this.saveMsgClass = "err"; return; }
+          this.saveMsg = "Saved ✓"; this.saveMsgClass = "ok"; setTimeout(() => { this.saveDialog = null; }, 1200);
+        } finally { this.saving = false; }
+      },
+    };
+  }
+</script>
+</body>
+</html>

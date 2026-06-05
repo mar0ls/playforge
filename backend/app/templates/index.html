@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="container" x-data="projectsPage()" x-init="load()">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h1>Projects</h1>
+    <div>
+      <button @click="showCreate = !showCreate">+ New project</button>
+      <button class="secondary" @click="showImport = !showImport">Import .zip</button>
+    </div>
+  </div>
+
+  <div class="card" x-show="showCreate" x-cloak>
+    <h3>Create empty project</h3>
+    <form @submit.prevent="create()">
+      <input type="text" placeholder="Project name" x-model="newName" required style="width:60%;">
+      <button type="submit">Create</button>
+    </form>
+    <p class="muted">Generates the recommended Ansible directory layout (inventories/, group_vars/, roles/, playbooks/site.yml).</p>
+  </div>
+
+  <div class="card" x-show="showImport" x-cloak>
+    <h3>Import existing project from .zip</h3>
+    <form @submit.prevent="importZip()" enctype="multipart/form-data">
+      <input type="text" placeholder="Project name" x-model="newName" required>
+      <input type="file" accept=".zip" @change="zipFile = $event.target.files[0]" required>
+      <button type="submit" :disabled="!zipFile">Import</button>
+    </form>
+    <p class="muted">The zip's directory structure is preserved. A fresh git history is initialised inside the project.</p>
+  </div>
+
+  <template x-if="projects.length === 0">
+    <p class="muted">No projects yet — create one or import a zip to get started.</p>
+  </template>
+
+  <template x-for="p in projects" :key="p.id">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:start;">
+        <div>
+          <a :href="`/projects/${p.id}`"><strong x-text="p.name"></strong></a>
+          <div class="muted" style="font-size:0.85rem;" x-text="p.id"></div>
+          <div x-text="p.description"></div>
+        </div>
+        <button class="secondary" @click="remove(p.id)">Delete</button>
+      </div>
+    </div>
+  </template>
+</section>
+
+<script>
+function projectsPage() {
+  return {
+    projects: [], newName: "", zipFile: null,
+    showCreate: false, showImport: false,
+    async load() {
+      const r = await fetch("/api/projects");
+      this.projects = await r.json();
+    },
+    async create() {
+      const r = await fetch("/api/projects", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: this.newName}),
+      });
+      if (r.ok) { this.newName = ""; this.showCreate = false; await this.load(); }
+      else alert(await r.text());
+    },
+    async importZip() {
+      const fd = new FormData();
+      fd.append("name", this.newName);
+      fd.append("upload", this.zipFile);
+      const r = await fetch("/api/projects/import-zip", {method: "POST", body: fd});
+      if (r.ok) { this.newName = ""; this.zipFile = null; this.showImport = false; await this.load(); }
+      else alert(await r.text());
+    },
+    async remove(id) {
+      if (!confirm("Delete this project and all its files?")) return;
+      await fetch(`/api/projects/${id}`, {method: "DELETE"});
+      await this.load();
+    },
+  };
+}
+</script>
+{% endblock %}

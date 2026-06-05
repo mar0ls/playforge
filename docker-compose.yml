@@ -1,0 +1,44 @@
+services:
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ansible-gui:latest
+    container_name: ansible-gui
+    ports:
+      - "8765:8765"
+    volumes:
+      # State (projects, git repos, sqlite) lives on the host so it survives rebuilds.
+      - ./data:/data
+      # Import sources — bind-mount the directories that hold your existing Ansible projects
+      # so "Open local path" can reach them. Add as many as you want; keep them read-only.
+      # The path you type in the UI is the path *inside the container*, e.g. /import/gitea/opnet.
+      # - ${HOME}/gitea:/import/gitea:ro
+      # - ${HOME}/ansible:/import/ansible:ro
+      # SSH agent socket — lets the container use your host SSH agent for git/ansible auth.
+      # Uncomment if you want it. Requires SSH_AUTH_SOCK set on the host.
+      # - ${SSH_AUTH_SOCK}:/ssh-agent
+    environment:
+      ANSIBLE_GUI_DATA_DIR: /data
+      ANSIBLE_GUI_HOST: 0.0.0.0
+      # Password protection. Leave UNSET for the old single-user-local behaviour
+      # (no login). Set it to require a password + session cookie for every request.
+      ANSIBLE_GUI_PASSWORD: ${ANSIBLE_GUI_PASSWORD:-}
+      # Credential master key (Fernet, base64 32 bytes). Leave unset and one is
+      # generated to /data/master.key on first start. Set this for production /
+      # multi-host deploys where you don't want the key on the data volume.
+      ANSIBLE_GUI_MASTER_KEY: ${ANSIBLE_GUI_MASTER_KEY:-}
+      # AI helper — three interchangeable backends (Anthropic / OpenAI / Ollama).
+      # These env vars are the "factory default"; the provider, keys, models and
+      # timeout are all editable at runtime from the Settings page (stored in SQLite).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # ANSIBLE_GUI_AI_MODEL: claude-haiku-4-5   # override Claude model (default: claude-opus-4-7)
+      # OpenAI or any OpenAI-compatible endpoint (base URL is set in the UI).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Point at your own Ollama server, e.g. http://host.docker.internal:11434 to
+      # reach an Ollama running on the Docker host. Leave unset to disable Ollama.
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      # Any model you've pulled in Ollama (e.g. deepseek-coder-v2, llama3.1).
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      # SSH_AUTH_SOCK: /ssh-agent
+    restart: unless-stopped

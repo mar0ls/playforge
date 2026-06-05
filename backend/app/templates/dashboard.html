@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Playforge{% endblock %}
+{% block breadcrumb %}<span>Dashboard</span>{% endblock %}
+{% block header_actions %}
+  <a href="/projects" class="btn btn-secondary"><i class="icon" data-lucide="folder-git-2"></i> Browse projects</a>
+  <a href="/projects?new=1" class="btn"><i class="icon" data-lucide="plus"></i> New project</a>
+{% endblock %}
+
+{% block content %}
+<section x-data="dashboard()" x-init="load()">
+
+  <div class="stats">
+    <div class="stat-tile accent">
+      <div class="label">Projects</div>
+      <div class="value" x-text="stats.projects ?? '—'"></div>
+      <div class="delta">Total imported / created</div>
+    </div>
+    <div class="stat-tile">
+      <div class="label">Runs (total)</div>
+      <div class="value" x-text="stats.runs_total ?? '—'"></div>
+      <div class="delta">Across all projects</div>
+    </div>
+    <div class="stat-tile ok">
+      <div class="label">Successful</div>
+      <div class="value" x-text="stats.runs_ok ?? '—'"></div>
+      <div class="delta">overall = ok</div>
+    </div>
+    <div class="stat-tile fail">
+      <div class="label">Failed</div>
+      <div class="value" x-text="stats.runs_failed ?? '—'"></div>
+      <div class="delta">need investigation</div>
+    </div>
+  </div>
+
+  <div class="panel-grid aside-right">
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Recent runs</h3>
+        <a href="/runs" class="text-sm muted">View all →</a>
+      </div>
+      <template x-if="recent.length === 0">
+        <div class="empty-state">
+          <i class="icon" data-lucide="play-circle"></i>
+          <p>No runs yet. Import or create a project, pick a playbook, hit Run.</p>
+        </div>
+      </template>
+      <table x-show="recent.length">
+        <thead>
+          <tr><th>Status</th><th>Project</th><th>Playbook</th><th>Started</th><th>Duration</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="r in recent" :key="r.id">
+            <tr class="clickable" @click="window.location.href = `/projects/${r.project_id}/runs/${r.id}`">
+              <td>
+                <span :class="`badge ${badgeFor(r.status)}`" x-text="r.status"></span>
+              </td>
+              <td x-text="r.project_name"></td>
+              <td class="font-mono text-xs" x-text="r.playbook"></td>
+              <td class="text-xs muted" x-text="formatTime(r.started_at)"></td>
+              <td class="text-xs muted" x-text="duration(r)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>Quick actions</h3>
+        <div class="row wrap gap-sm">
+          <a href="/projects?new=1" class="btn btn-secondary"><i class="icon" data-lucide="plus"></i> New project</a>
+          <a href="/projects?import=path" class="btn btn-secondary"><i class="icon" data-lucide="folder-input"></i> Open server path</a>
+          <a href="/projects?import=git" class="btn btn-secondary"><i class="icon" data-lucide="git-branch"></i> Import from git</a>
+          <a href="/projects?import=zip" class="btn btn-secondary"><i class="icon" data-lucide="upload"></i> Upload .zip</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>System</h3>
+        <div class="text-sm muted">
+          <div class="row between"><span>Data dir</span><span class="font-mono text-xs" x-text="sys.data_dir || '—'"></span></div>
+          <div class="row between"><span>Ansible</span><span class="font-mono text-xs" x-text="sys.ansible || '—'"></span></div>
+          <div class="row between"><span>Mode</span><span class="font-mono text-xs">single-user</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</section>
+
+<script>
+function dashboard() {
+  return {
+    stats: {}, recent: [], sys: {},
+    async load() {
+      const [s, r, h] = await Promise.all([
+        fetch("/api/dashboard/stats").then(r => r.json()),
+        fetch("/api/dashboard/recent-runs").then(r => r.json()),
+        fetch("/api/dashboard/system").then(r => r.json()),
+      ]);
+      this.stats = s; this.recent = r; this.sys = h;
+      this.$nextTick(() => lucide.createIcons());
+    },
+    badgeFor(s) {
+      if (s === "ok" || s === "successful") return "ok";
+      if (s === "canceled") return "warn";
+      if (s === "failed") return "fail";
+      if (s === "running") return "run";
+      return "muted";
+    },
+    formatTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return d.toLocaleString();
+    },
+    duration(r) {
+      if (!r.ended_at || !r.started_at) return "—";
+      const ms = new Date(r.ended_at) - new Date(r.started_at);
+      const s = Math.round(ms / 1000);
+      if (s < 60) return `${s}s`;
+      return `${Math.floor(s/60)}m ${s%60}s`;
+    },
+  };
+}
+</script>
+{% endblock %}

@@ -1,0 +1,18 @@
+---
+- name: Hello localhost
+  hosts: local
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:
+      tags: [ping]
+
+    - name: Print a message
+      ansible.builtin.debug:
+        msg: "Playforge smoke test ran at {{ ansible_date_time.iso8601 | default('now') }}"
+      tags: [hello]
+
+    - name: Intentionally fail when failtest tag is selected
+      ansible.builtin.fail:
+        msg: "This task is meant to fail to exercise the failure summary."
+      tags: [failtest]

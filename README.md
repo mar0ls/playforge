@@ -1,0 +1,111 @@
+# Playforge
+
+A self-hosted web UI for managing and running Ansible — a simpler, friendlier AWX
+that runs from a single `docker compose up`, with no Postgres, Redis or Receptor.
+
+What makes it different is the **AI layer that checks its own output**. Most tools
+either don't have AI or trust it blindly. Playforge generates playbooks from plain
+language, then verifies them: it flags modules that don't exist, catches logic
+mistakes a model misses (SSH/UFW lockout, destructive ops, malformed `vars`), and
+grounds every answer in your real modules and files — fully offline.
+
+## Features
+
+**Projects & runs**
+- Import an existing Ansible project from a local path, a `.zip`, or `git clone`
+  (Gitea/GitHub) — junk like `.venv/` and caches is filtered out automatically.
+- Every project is its own git repo with an auto-commit on each save: free undo,
+  diff and history. Push/pull to a remote when you want.
+- Run playbooks (full or by tags) with live per-task output, a structured
+  pass/fail summary, and a global, filterable run history.
+- Auto-detects playbooks/inventories/roles; works with both the scaffolded layout
+  and flat repos (playbook + `hosts.ini` at the root).
+- Cron scheduler in-process (APScheduler — no extra worker), run templates,
+  environments, ad-hoc commands.
+
+**Secrets**
+- Credentials (SSH keys, vault/become passwords, WireGuard) encrypted at rest
+  with Fernet.
+- Ansible Vault for in-repo secrets — encrypt/decrypt/view from the UI.
+
+**Editor & dependencies**
+- Monaco editor with inline ansible-lint, structured inventory editing (INI + YAML),
+- a playbook builder (simple → advanced: handlers, loops, `serial`, `become` per task),
+- and Ansible Galaxy: install/remove roles & collections by name or from `requirements.yml`.
+
+**✨ AI assistant (the part that's actually unique)**
+- **Chat** on every page (slide-out dock), aware of the current project.
+- **NL → playbook**: describe what you want, get a reviewable spec + YAML.
+- **Remediation loop**: after a failure, get a concrete fix and re-run only the
+  failed hosts.
+- **Pre-run preview**: a `--check` dry-run narrated in plain language ("what will
+  change, where").
+- **Auto-runbook**: living Markdown docs generated from your playbooks.
+- **Self-checking layers** behind all of it:
+  - *Anti-hallucination* — module names validated against `ansible-doc`
+    (`ansible.builtin.ufw` → flagged as fake; `community.general.ufw` → "install
+    the collection", not "doesn't exist").
+  - *Rule engine* (neuro-symbolic) — catches lockout, destructive ops,
+    contradictions, handler misuse, malformed structure, even inside roles.
+  - *RAG / BM25* — grounds answers in the modules actually installed and in your
+    project's real file contents. Works offline; optional web-fetch from
+    docs.ansible.com when you allow it.
+
+Pluggable model backends: Anthropic, OpenAI (or any OpenAI-compatible endpoint),
+or a local **Ollama** server.
+
+## Quick start
+
+```bash
+git clone https://github.com/mar0ls/ansible_gui.git
+cd ansible_gui
+docker compose up --build -d   # → http://127.0.0.1:8765
+```
+
+Configure the AI helper under **Settings → AI helper** (or set `OLLAMA_URL` /
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in `docker-compose.yml`). Everything works
+without AI too — it just adds the assistant.
+
+### Optional
+
+- **Password protection**: set `ANSIBLE_GUI_PASSWORD` to require login (signed
+  session cookie). Unset = single-user local, no login.
+- **Import your projects**: bind-mount their directories read-only (see the
+  commented `/import/*` examples in `docker-compose.yml`).
+- **Naming note**: product name is **Playforge**; technical env/image identifiers
+  use the `ANSIBLE_GUI*` / `ansible-gui` prefix.
+
+## Development
+
+```bash
+make build      # build the image
+make test       # run the full suite inside the image (git + ansible available)
+make up / down  # start / stop
+```
+
+For live code reload while developing, layer the dev override (bind-mounts
+`backend/app` and runs uvicorn with `--reload`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+The test suite (290+ cases) runs in CI on every push and PR — see
+`.github/workflows/ci.yml`.
+
+## Design notes
+
+- **Air-gap friendly**: core UI JS libraries are vendored locally and AI can run
+  against a local Ollama. By default, online docs lookup is off. Note: the Monaco
+  editor assets are loaded from jsDelivr unless you vendor Monaco yourself.
+- **No heavy infra**: SQLite (WAL mode), in-process scheduler, direct runner.
+  One container.
+- Third-party components are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+## License
+
+Copyright (C) 2026 mar0ls. Playforge is licensed under the **GNU General Public
+License v3.0** — see [LICENSE](LICENSE). GPL-3.0 keeps the project compatible with
+its core dependencies (`ansible-core`, `ansible-runner`, `ansible-lint`), which are
+GPL-3.0 themselves. Forks and redistributed versions must stay open-source under
+the same license.

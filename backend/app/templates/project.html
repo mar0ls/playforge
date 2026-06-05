@@ -1,0 +1,1877 @@
+{% extends "base.html" %}
+{% block title %}{{ project_id }} — Playforge{% endblock %}
+{% block breadcrumb %}
+  <a href="/projects" class="muted">Projects</a>
+  <span class="sep">/</span>
+  <span x-text="title" x-data="{title: '{{ project_id }}'}">{{ project_id }}</span>
+{% endblock %}
+{% block head_extra %}
+  <!-- Monaco is loaded from jsDelivr by default (documented in README / licenses). -->
+  <link rel="stylesheet" data-name="vs/editor/editor.main"
+        href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css"
+        integrity="sha384-WCfMZP6K9Oykzu17MglzYPUUUPrgmWK2WglGpqyNEzX/A9Yo9txzqQf4IO+7RbFW"
+        crossorigin="anonymous">
+{% endblock %}
+
+{% block content %}
+<section x-data="projectPage('{{ project_id }}')" x-init="load()">
+
+  <div class="tabs">
+    <a href="#" :class="{active: tab === 'overview'}" @click.prevent="tab = 'overview'">Overview</a>
+    <a href="#" :class="{active: tab === 'files'}" @click.prevent="tab = 'files'">Files</a>
+    <a href="#" :class="{active: tab === 'inventory'}" @click.prevent="tab = 'inventory'; loadInvTabData()">Inventory</a>
+    <a href="#" :class="{active: tab === 'run'}" @click.prevent="tab = 'run'">Run</a>
+    <a href="#" :class="{active: tab === 'history'}" @click.prevent="tab = 'history'">Run history</a>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div x-show="tab === 'overview'" x-cloak>
+    <div class="stats">
+      <div class="stat-tile accent">
+        <div class="label">Files</div>
+        <div class="value" x-text="counts.files"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Playbooks (detected)</div>
+        <div class="value" x-text="(detected.playbooks || []).length"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Inventories (detected)</div>
+        <div class="value" x-text="(detected.inventories || []).length"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Roles</div>
+        <div class="value" x-text="(detected.roles || []).length"></div>
+      </div>
+    </div>
+
+    <div class="panel-grid two">
+      <div class="card">
+        <div class="card-header">
+          <h3>Playbooks</h3>
+          <button class="btn-secondary btn-sm" @click="builder.open = !builder.open">
+            <i class="icon" data-lucide="plus"></i> New playbook
+          </button>
+        </div>
+        <template x-if="(detected.playbooks || []).length === 0">
+          <div class="muted text-sm">No playbooks detected. A playbook is a YAML file at the top level or under <code>playbooks/</code> that defines plays with <code>hosts:</code>.</div>
+        </template>
+        <ul class="tree">
+          <template x-for="pb in (detected.playbooks || [])" :key="pb">
+            <li><a href="#" @click.prevent="tab = 'run'; runForm.playbook = pb" x-text="pb"></a></li>
+          </template>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Inventories</h3>
+        <template x-if="(detected.inventories || []).length === 0">
+          <div class="muted text-sm">No inventories detected.</div>
+        </template>
+        <ul class="tree">
+          <template x-for="inv in (detected.inventories || [])" :key="inv">
+            <li><a href="#" @click.prevent="tab = 'run'; runForm.inventory = inv" x-text="inv"></a></li>
+          </template>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Dependencies (Ansible Galaxy)</h3>
+        <button class="btn-secondary btn-sm" @click="galaxyInstall()"
+                :disabled="galaxy.busy || !galaxy.requirements">
+          <i class="icon" data-lucide="download"></i>
+          <span x-text="galaxy.busy ? 'Installing…' : 'Install'"></span>
+        </button>
+      </div>
+      <template x-if="!galaxy.requirements">
+        <div class="muted text-sm">No <code>requirements.yml</code> at the project root. Add one
+          (Files tab) listing <code>roles:</code> / <code>collections:</code>, then install here.</div>
+      </template>
+      <template x-if="galaxy.requirements">
+        <div>
+          <div class="text-xs muted mb-1">From <code x-text="galaxy.requirements_path"></code></div>
+          <pre class="log" style="max-height: 8rem;" x-text="galaxy.requirements"></pre>
+        </div>
+      </template>
+      <div class="form-row mt-2" style="align-items: flex-end;">
+        <label style="flex:0 0 8rem;">Add by name
+          <select x-model="galaxy.addKind">
+            <option value="collection">collection</option>
+            <option value="role">role</option>
+          </select>
+        </label>
+        <label style="flex:1;">
+          <input type="text" x-model="galaxy.addName"
+                 :placeholder="galaxy.addKind === 'role' ? 'geerlingguy.nginx' : 'community.general'"
+                 @keydown.enter.prevent="galaxyAdd()">
+        </label>
+        <button class="btn-sm" @click="galaxyAdd()" :disabled="galaxy.busy || !galaxy.addName.trim()">
+          <i class="icon" data-lucide="plus"></i> Install
+        </button>
+      </div>
+
+      <div class="row gap-md mt-2" style="flex-wrap: wrap;">
+        <div style="flex:1; min-width: 14rem;">
+          <div class="text-xs muted">Roles installed (<span x-text="galaxy.installed.roles.length"></span>)</div>
+          <template x-if="!galaxy.installed.roles.length"><span class="text-sm muted">—</span></template>
+          <div class="row wrap gap-xs">
+            <template x-for="r in galaxy.installed.roles" :key="`role-${r}`">
+              <span class="badge" style="display:inline-flex; align-items:center; gap:.3rem;">
+                <span class="font-mono" x-text="r"></span>
+                <a href="#" @click.prevent="galaxyRemove('role', r)" title="Remove" style="color:var(--fail);">✕</a>
+              </span>
+            </template>
+          </div>
+        </div>
+        <div style="flex:1; min-width: 14rem;">
+          <div class="text-xs muted">Collections installed (<span x-text="galaxy.installed.collections.length"></span>)</div>
+          <template x-if="!galaxy.installed.collections.length"><span class="text-sm muted">—</span></template>
+          <div class="row wrap gap-xs">
+            <template x-for="c in galaxy.installed.collections" :key="`coll-${c}`">
+              <span class="badge" style="display:inline-flex; align-items:center; gap:.3rem;">
+                <span class="font-mono" x-text="c"></span>
+                <a href="#" @click.prevent="galaxyRemove('collection', c)" title="Remove" style="color:var(--fail);">✕</a>
+              </span>
+            </template>
+          </div>
+        </div>
+      </div>
+      <pre class="log mt-2" x-show="galaxy.output" x-text="galaxy.output"></pre>
+      <span class="text-sm" style="color: var(--fail);" x-show="galaxy.error" x-text="galaxy.error"></span>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Git remote</h3>
+        <div class="row gap-sm">
+          <button class="btn-secondary btn-sm" @click="gitPull()" :disabled="git.busy || !git.remote">
+            <i class="icon" data-lucide="download"></i> Pull
+          </button>
+          <button class="btn-secondary btn-sm" @click="gitPush()" :disabled="git.busy || !git.remote">
+            <i class="icon" data-lucide="upload"></i> Push
+          </button>
+        </div>
+      </div>
+      <div class="text-xs muted" x-show="git.last_commit">
+        branch <span class="font-mono" x-text="git.branch"></span> ·
+        <span x-text="git.last_commit ? git.last_commit.message : ''"></span>
+      </div>
+      <div class="form-row mt-1">
+        <label style="flex: 2;">Remote URL
+          <input type="text" x-model="git.remoteInput"
+                 placeholder="https://gitea.local/me/repo.git  or  git@host:me/repo.git">
+        </label>
+        <button class="btn-secondary btn-sm" style="align-self: flex-end;"
+                @click="gitSetRemote()" :disabled="git.busy || !git.remoteInput">Save remote</button>
+      </div>
+      <details class="mt-1">
+        <summary class="text-xs muted" style="cursor: pointer;">HTTPS auth (private repos)</summary>
+        <div class="form-row mt-1">
+          <label>Username <input type="text" x-model="git.username" placeholder="for private HTTPS"></label>
+          <label>Token / password <input type="password" x-model="git.token" placeholder="never persisted"></label>
+        </div>
+        <p class="text-xs muted">For SSH URLs, mount your host SSH agent socket (see docker-compose.yml).</p>
+      </details>
+      <pre class="log mt-2" x-show="git.output" x-text="git.output"></pre>
+      <span class="text-sm" style="color: var(--fail);" x-show="git.error" x-text="git.error"></span>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Project runbook (AI)</h3>
+        <div class="row gap-sm">
+          <button class="btn-secondary btn-sm" @click="genRunbook()" :disabled="runbook.busy || !aiEnabled">
+            <i class="icon" data-lucide="book-text"></i>
+            <span x-text="runbook.busy ? 'Generating…' : (runbook.md ? 'Regenerate' : 'Generate')"></span>
+          </button>
+          <button class="btn-sm" x-show="runbook.md" @click="saveRunbook()" :disabled="runbook.saving">
+            <i class="icon" data-lucide="save"></i>
+            <span x-text="runbook.saving ? 'Saving…' : (runbook.saved ? 'Saved ✓' : 'Save as docs/RUNBOOK.md')"></span>
+          </button>
+        </div>
+      </div>
+      <p class="text-sm muted" x-show="!aiEnabled">Enable the AI helper in Settings to generate a runbook.</p>
+      <p class="text-sm muted" x-show="aiEnabled && !runbook.md && !runbook.busy">
+        Living documentation generated from your playbooks, inventory and roles — review, then save into the project.</p>
+      <div class="md-body" style="max-height: 26rem; overflow-y: auto;" x-show="runbook.md" x-html="renderMarkdown(runbook.md)"></div>
+      <span class="text-sm" style="color: var(--fail);" x-show="runbook.error" x-text="runbook.error"></span>
+    </div>
+
+    <!-- Playbook builder (form / JSON) -->
+    <div class="card" x-show="builder.open" x-cloak>
+      <div class="card-header">
+        <h3>New playbook</h3>
+        <div class="view-toggle">
+          <button x-show="aiEnabled" :class="{active: builder.mode === 'ai'}" @click="builder.mode = 'ai'">✨ Describe (AI)</button>
+          <button :class="{active: builder.mode === 'form'}" @click="builder.mode = 'form'">Form</button>
+          <button :class="{active: builder.mode === 'json'}" @click="builder.mode = 'json'">Paste JSON</button>
+        </div>
+      </div>
+
+      <label x-show="playbookTemplates.length">Start from template
+        <select @change="loadPlaybookTemplate($event.target.value); $event.target.value=''">
+          <option value="">— blank —</option>
+          <template x-for="t in playbookTemplates" :key="t.id">
+            <option :value="t.id" x-text="`${t.category}: ${t.name}`" :title="t.description"></option>
+          </template>
+        </select>
+      </label>
+
+      <label>File path (must end with .yml or .yaml)
+        <input type="text" x-model="builder.path" required placeholder="playbooks/deploy.yml">
+      </label>
+
+      <!-- Form mode -->
+      <div x-show="builder.mode === 'form'">
+        <div class="form-row">
+          <label>Play name
+            <input type="text" x-model="builder.spec.name" placeholder="Deploy webapp">
+          </label>
+          <label>Target hosts (pattern or group)
+            <input type="text" x-model="builder.spec.hosts" list="builder-host-patterns" placeholder="all">
+            <datalist id="builder-host-patterns">
+              <template x-for="g in Object.keys(invData.groups || {})" :key="`bg-${g}`">
+                <option :value="g"></option>
+              </template>
+            </datalist>
+          </label>
+        </div>
+        <div class="row gap-md">
+          <div class="checkbox-row"><input type="checkbox" id="b-become" x-model="builder.spec.become"><label for="b-become" style="margin:0; display:inline;">become (sudo)</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="b-gf" :checked="builder.spec.gather_facts !== false" @change="builder.spec.gather_facts = $event.target.checked ? null : false"><label for="b-gf" style="margin:0; display:inline;">gather_facts</label></div>
+        </div>
+
+        <details class="mt-2">
+          <summary class="text-sm muted" style="cursor:pointer;">Advanced play options (become_user, serial, strategy, vars)</summary>
+          <div class="form-row mt-1">
+            <label>become_user
+              <input type="text" x-model="builder.spec.become_user" placeholder="root / deploy">
+            </label>
+            <label>serial (rolling: 1, 2, 30%)
+              <input type="text" x-model="builder.spec.serial" placeholder="e.g. 1 or 25%">
+            </label>
+            <label>strategy
+              <select x-model="builder.spec.strategy">
+                <option value="">(default linear)</option>
+                <option value="free">free</option>
+                <option value="host_pinned">host_pinned</option>
+                <option value="serial">serial</option>
+              </select>
+            </label>
+          </div>
+          <label>Play vars (YAML mapping)
+            <textarea x-model="builder.spec.vars_yaml" rows="3" placeholder="app_port: 8080&#10;env: prod"></textarea>
+          </label>
+        </details>
+
+        <h4 class="mt-2">Tasks</h4>
+        <template x-for="(t, i) in builder.spec.tasks" :key="i">
+          <div class="card" style="background: var(--bg-elev-2); margin-bottom: 0.5rem;">
+            <div class="form-row">
+              <label>Task name
+                <input type="text" x-model="t.name" required>
+              </label>
+              <label>Module
+                <input type="text" x-model="t.module" list="builder-modules" required placeholder="ansible.builtin.debug">
+              </label>
+            </div>
+            <label>Args (YAML mapping)
+              <textarea x-model="t.args_yaml" rows="3" placeholder="msg: Hello"></textarea>
+            </label>
+            <div class="form-row">
+              <label>Tags (comma-separated, optional)
+                <input type="text" x-model="t.tags_raw" placeholder="setup,deploy">
+              </label>
+              <label>when (optional condition)
+                <input type="text" x-model="t.when" placeholder="ansible_os_family == 'Debian'">
+              </label>
+            </div>
+            <details>
+              <summary class="text-xs muted" style="cursor:pointer;">Advanced task (become, loop, register, notify)</summary>
+              <div class="form-row mt-1">
+                <label>loop (comma list or {{ '{{ var }}' }})
+                  <input type="text" x-model="t.loop" placeholder="nginx, git  or  {{ '{{ users }}' }}">
+                </label>
+                <label>register (var name)
+                  <input type="text" x-model="t.register" placeholder="result">
+                </label>
+              </div>
+              <div class="form-row">
+                <label>notify (handler names, comma-sep)
+                  <input type="text" x-model="t.notify" placeholder="restart nginx">
+                </label>
+                <label>become_user (this task)
+                  <input type="text" x-model="t.become_user" placeholder="root">
+                </label>
+              </div>
+              <div class="checkbox-row"><input type="checkbox" :id="`t-become-${i}`" x-model="t.become"><label :for="`t-become-${i}`" style="margin:0; display:inline;">become (this task only)</label></div>
+            </details>
+            <button type="button" class="btn-secondary btn-sm danger mt-1" @click="builder.spec.tasks.splice(i, 1)">
+              <i class="icon" data-lucide="trash-2"></i> Remove task
+            </button>
+          </div>
+        </template>
+        <button type="button" class="btn-secondary btn-sm" @click="addTaskRow()">
+          <i class="icon" data-lucide="plus"></i> Add task
+        </button>
+
+        <h4 class="mt-3">Handlers <span class="text-xs muted">(triggered by notify)</span></h4>
+        <template x-for="(h, hi) in builder.spec.handlers" :key="`h-${hi}`">
+          <div class="card" style="background: var(--bg-elev-2); margin-bottom: 0.5rem;">
+            <div class="form-row">
+              <label>Handler name <input type="text" x-model="h.name" placeholder="restart nginx"></label>
+              <label>Module <input type="text" x-model="h.module" list="builder-modules" placeholder="ansible.builtin.service"></label>
+            </div>
+            <label>Args (YAML mapping)
+              <textarea x-model="h.args_yaml" rows="2" placeholder="name: nginx&#10;state: restarted"></textarea>
+            </label>
+            <button type="button" class="btn-secondary btn-sm danger" @click="builder.spec.handlers.splice(hi, 1)">
+              <i class="icon" data-lucide="trash-2"></i> Remove handler
+            </button>
+          </div>
+        </template>
+        <button type="button" class="btn-secondary btn-sm" @click="addHandlerRow()">
+          <i class="icon" data-lucide="plus"></i> Add handler
+        </button>
+
+        <datalist id="builder-modules">
+          <option value="ansible.builtin.debug"></option>
+          <option value="ansible.builtin.ping"></option>
+          <option value="ansible.builtin.command"></option>
+          <option value="ansible.builtin.shell"></option>
+          <option value="ansible.builtin.copy"></option>
+          <option value="ansible.builtin.template"></option>
+          <option value="ansible.builtin.file"></option>
+          <option value="ansible.builtin.lineinfile"></option>
+          <option value="ansible.builtin.service"></option>
+          <option value="ansible.builtin.systemd"></option>
+          <option value="ansible.builtin.apt"></option>
+          <option value="ansible.builtin.yum"></option>
+          <option value="ansible.builtin.dnf"></option>
+          <option value="ansible.builtin.package"></option>
+          <option value="ansible.builtin.user"></option>
+          <option value="ansible.builtin.group"></option>
+          <option value="ansible.builtin.git"></option>
+          <option value="ansible.builtin.uri"></option>
+          <option value="ansible.builtin.get_url"></option>
+          <option value="ansible.builtin.cron"></option>
+          <option value="ansible.builtin.setup"></option>
+        </datalist>
+      </div>
+
+      <!-- JSON mode -->
+      <div x-show="builder.mode === 'json'">
+        <label>Spec as JSON
+          <textarea x-model="builder.jsonRaw" rows="14" class="font-mono"
+                    placeholder='{ "name": "Deploy", "hosts": "web", "become": true, "tasks": [ { "name": "Install nginx", "module": "ansible.builtin.apt", "args_yaml": "name: nginx\nstate: present" } ] }'></textarea>
+        </label>
+      </div>
+
+      <!-- AI mode: describe in plain language -->
+      <div x-show="builder.mode === 'ai'">
+        <label>Describe what this playbook should do
+          <textarea x-model="builder.aiPrompt" rows="4"
+                    placeholder="e.g. Install and start nginx on Debian hosts, then deploy the app from git and restart its service"></textarea>
+        </label>
+        <div class="row gap-sm">
+          <button type="button" @click="generateFromAI()" :disabled="builder.aiBusy || !builder.aiPrompt.trim()">
+            <i class="icon" data-lucide="sparkles"></i>
+            <span x-text="builder.aiBusy ? 'Generating…' : 'Generate'"></span>
+          </button>
+          <span class="text-sm muted" x-show="builder.aiBusy">AI is drafting and self-checking module names…</span>
+          <span class="text-sm" style="color: var(--fail);" x-show="builder.aiError" x-text="builder.aiError"></span>
+        </div>
+        <p class="text-sm muted mt-1">The draft loads into the Form tab for you to review and edit before saving.</p>
+      </div>
+
+      <div class="row gap-sm mt-2">
+        <button type="button" @click="previewPlaybook()">
+          <i class="icon" data-lucide="eye"></i> Preview
+        </button>
+        <button type="button" @click="savePlaybook()" :disabled="builder.busy">
+          <i class="icon" data-lucide="save"></i>
+          <span x-text="builder.busy ? 'Saving…' : 'Save playbook'"></span>
+        </button>
+        <div class="checkbox-row"><input type="checkbox" id="b-over" x-model="builder.overwrite"><label for="b-over" style="margin:0; display:inline;">overwrite if exists</label></div>
+        <span x-show="builder.error" class="text-sm" style="color: var(--fail);" x-text="builder.error"></span>
+      </div>
+
+      <div class="lint-panel mt-2" x-show="builder.aiValidation && (builder.aiValidation.unknown_modules || []).length">
+        <h4>
+          <i class="icon" data-lucide="shield-alert"></i>
+          <span>AI self-check: modules not found by ansible-doc</span>
+        </h4>
+        <template x-for="m in ((builder.aiValidation && builder.aiValidation.unknown_modules) || [])" :key="m">
+          <div class="lint-issue severity-warning">
+            <span class="rule" x-text="m"></span>
+            <span class="desc">not in the installed module list — verify it exists / install its collection before running</span>
+            <span></span>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="builder.preview" class="mt-2">
+        <h4>Preview</h4>
+        <pre class="log" x-text="builder.preview"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- FILES -->
+  <div x-show="tab === 'files'" x-cloak>
+    <div class="panel-grid aside">
+      <div class="card tree-card">
+        <div class="row between" style="align-items:center;">
+          <h3>Tree</h3>
+          <div class="row gap-xs">
+            <button class="btn-ghost btn-sm" @click="collapseAll()" title="Collapse all folders">▸</button>
+            <button class="btn-ghost btn-sm" @click="collapsedDirs = []" title="Expand all folders">▾</button>
+          </div>
+        </div>
+        <ul class="tree">
+          <template x-for="node in visibleTree()" :key="node.path">
+            <li :style="`margin-left:${node.depth * 0.8}rem`">
+              <span x-show="node.isDir" class="dir" style="cursor:pointer; user-select:none;"
+                    @click="toggleDir(node.path)">
+                <span x-text="collapsedDirs.includes(node.path) ? '▸' : '▾'"></span>
+                <span x-text="node.name"></span>
+              </span>
+              <a x-show="!node.isDir" href="#"
+                 :class="{active: selected === node.path}"
+                 @click.prevent="openFile(node.path)" x-text="node.name"></a>
+            </li>
+          </template>
+        </ul>
+      </div>
+      <div>
+        <template x-if="!selected">
+          <div class="empty-state">
+            <i class="icon" data-lucide="file-code-2"></i>
+            <p>Pick a file from the tree to edit it.</p>
+          </div>
+        </template>
+        <div x-show="selected" x-cloak>
+          <div class="editor-toolbar">
+            <span class="file-name">
+              <span x-text="selected"></span>
+              <span class="dirty-dot" x-show="dirty" title="unsaved changes"></span>
+              <span class="badge" x-show="fileEncrypted" style="margin-left:.4rem;">🔒 vault</span>
+            </span>
+            <div class="right">
+              <!-- Vault controls: only when a vault_password credential exists -->
+              <template x-if="vaultCreds.length">
+                <span class="row gap-xs" style="align-items:center;">
+                  <select x-model.number="vaultCredId" class="btn-sm" title="Vault password credential"
+                          style="max-width:10rem;">
+                    <template x-for="c in vaultCreds" :key="c.id">
+                      <option :value="c.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                  <button class="btn-secondary btn-sm" x-show="!fileEncrypted"
+                          @click="vaultEncrypt()" :disabled="vaultBusy">
+                    <i class="icon" data-lucide="lock"></i> Encrypt
+                  </button>
+                  <button class="btn-secondary btn-sm" x-show="fileEncrypted"
+                          @click="vaultView()" :disabled="vaultBusy">
+                    <i class="icon" data-lucide="eye"></i> View
+                  </button>
+                  <button class="btn-secondary btn-sm" x-show="fileEncrypted"
+                          @click="vaultDecrypt()" :disabled="vaultBusy">
+                    <i class="icon" data-lucide="lock-open"></i> Decrypt
+                  </button>
+                </span>
+              </template>
+              <span class="badge run" x-show="linting"><span class="dot run"></span> Linting</span>
+              <button class="btn-secondary btn-sm" @click="runLint()" :disabled="linting || !selected">
+                <i class="icon" data-lucide="shield-check"></i> Lint
+              </button>
+              <button class="btn-sm" @click="saveFile()" :disabled="!dirty || saving">
+                <i class="icon" data-lucide="save"></i>
+                <span x-text="saving ? 'Saving…' : 'Save'"></span>
+              </button>
+            </div>
+          </div>
+          <div class="monaco-frame" x-ref="editor"></div>
+
+          <div class="lint-panel" x-show="vaultPlaintext">
+            <h4>
+              <i class="icon" data-lucide="eye"></i>
+              <span>Decrypted view (not saved to disk)</span>
+              <button class="btn-secondary btn-sm" @click="vaultPlaintext = ''" style="margin-left:auto;">Hide</button>
+            </h4>
+            <pre class="log" x-text="vaultPlaintext"></pre>
+          </div>
+
+          <div class="lint-panel" x-show="lintIssues.length || lintError">
+            <h4>
+              <i class="icon" data-lucide="shield-alert"></i>
+              <span>Lint issues</span>
+              <span class="badge muted" x-text="lintIssues.length"></span>
+            </h4>
+            <template x-if="lintError">
+              <div class="lint-issue severity-error">
+                <span class="rule">lint-error</span>
+                <span class="desc" x-text="lintError"></span>
+                <span></span>
+              </div>
+            </template>
+            <template x-for="(it, i) in lintIssues" :key="i">
+              <div class="lint-issue" :class="`severity-${it.monaco_severity}`"
+                   @click="jumpTo(it.line, it.column)" style="cursor:pointer;">
+                <span class="rule" x-text="it.rule"></span>
+                <span class="desc" x-text="it.description"></span>
+                <span class="loc" x-text="`L${it.line}:${it.column}`"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INVENTORY -->
+  <div x-show="tab === 'inventory'" x-cloak>
+    <div class="panel-grid aside-right">
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Inventory</h3>
+            <select x-model="invTab.path" @change="loadInvTabData()" style="max-width: 320px;">
+              <option value="">— pick an inventory —</option>
+              <template x-for="inv in (detected.inventories || [])" :key="inv">
+                <option :value="inv" x-text="inv"></option>
+              </template>
+            </select>
+          </div>
+
+          <template x-if="invTab.path && invTab.data && !invTab.data.hosts.length">
+            <div class="muted text-sm">No hosts found yet in <code x-text="invTab.path"></code>. Add one on the right.</div>
+          </template>
+
+          <template x-for="(g, name) in (invTab.data.groups || {})" :key="name">
+            <div class="mt-1" x-show="name !== 'all' && name !== 'ungrouped'">
+              <h4 class="font-mono" style="text-transform:none; letter-spacing:0; color: var(--text-soft);">[<span x-text="name"></span>]</h4>
+              <table>
+                <thead><tr><th>Host</th><th>Member of</th></tr></thead>
+                <tbody>
+                  <template x-for="h in g.hosts" :key="`${name}-${h}`">
+                    <tr>
+                      <td class="font-mono text-sm" x-text="h"></td>
+                      <td class="text-xs muted" x-text="hostGroups(h).join(', ')"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-if="g.children && g.children.length">
+                <div class="text-xs muted">child groups: <span x-text="g.children.join(', ')"></span></div>
+              </template>
+            </div>
+          </template>
+
+          <template x-if="invTab.path">
+            <div class="mt-2">
+              <h4>vars files</h4>
+              <div class="text-xs muted" x-show="!invTab.varsFiles.length">
+                No group_vars or host_vars detected at this inventory level. Use the Files tab to create them.
+              </div>
+              <ul class="tree text-sm">
+                <template x-for="f in invTab.varsFiles" :key="f">
+                  <li><a href="#" @click.prevent="tab='files'; openFile(f)" class="font-mono" x-text="f"></a></li>
+                </template>
+              </ul>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="card" x-show="invTab.path" x-cloak>
+        <h3>Add host</h3>
+        <form @submit.prevent="addHost()">
+          <label>Host name
+            <input type="text" x-model="addForm.name" required placeholder="web03.example.com">
+          </label>
+          <label>Group
+            <input type="text" x-model="addForm.group" required list="inv-groups"
+                   placeholder="pick an existing group or type a new one">
+            <datalist id="inv-groups">
+              <template x-for="g in Object.keys(invTab.data.groups || {})" :key="`opt-${g}`">
+                <option :value="g" x-show="g !== 'all' && g !== 'ungrouped'"></option>
+              </template>
+            </datalist>
+          </label>
+          <div class="form-row">
+            <label>ansible_host (IP, optional)
+              <input type="text" x-model="addForm.host" placeholder="10.0.0.42">
+            </label>
+            <label>ansible_user
+              <input type="text" x-model="addForm.user" placeholder="root">
+            </label>
+            <label>ansible_port
+              <input type="text" x-model="addForm.port" placeholder="22">
+            </label>
+          </div>
+          <label>Extra vars (YAML-ish, one `key=value` per line, optional)
+            <textarea x-model="addForm.extraRaw" rows="3" placeholder="ansible_python_interpreter=/usr/bin/python3"></textarea>
+          </label>
+          <div class="row gap-sm mt-1">
+            <button type="submit" :disabled="addForm.busy">
+              <i class="icon" data-lucide="plus"></i>
+              <span x-text="addForm.busy ? 'Saving…' : 'Add host'"></span>
+            </button>
+            <span x-show="addForm.lastSaved" class="text-xs muted" x-text="addForm.lastSaved"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- RUN -->
+  <div x-show="tab === 'run'" x-cloak>
+    <div class="panel-grid aside">
+      <div class="card">
+        <div class="card-header">
+          <h3>Run parameters</h3>
+          <button class="btn-secondary btn-sm" @click="showSaveTpl = !showSaveTpl" :disabled="!runForm.playbook">
+            <i class="icon" data-lucide="bookmark-plus"></i> Save as template
+          </button>
+        </div>
+
+        <div class="row gap-sm" style="align-items: flex-end;">
+          <label style="flex: 1;">Environment
+            <select x-model.number="selectedEnvId" @change="applyEnvironment(selectedEnvId)">
+              <option value="0">— none —</option>
+              <template x-for="e in environments" :key="e.id">
+                <option :value="e.id" x-text="e.name"></option>
+              </template>
+            </select>
+          </label>
+          <button type="button" class="btn-secondary btn-sm" @click="showEnvMgr = !showEnvMgr">
+            <i class="icon" data-lucide="layers"></i> Manage
+          </button>
+        </div>
+
+        <div class="card" x-show="showEnvMgr" x-cloak style="background: var(--bg-elev-2); margin-bottom: 0.75rem;">
+          <h4>Environments</h4>
+          <template x-if="!environments.length">
+            <p class="muted text-sm">None yet. An environment pairs an inventory with a default credential.</p>
+          </template>
+          <template x-for="e in environments" :key="e.id">
+            <div class="row between" style="padding: 0.25rem 0;">
+              <span class="text-sm"><strong x-text="e.name"></strong>
+                <span class="muted font-mono text-xs" x-text="e.inventory_path || '(no inventory)'"></span></span>
+              <button type="button" class="btn-secondary btn-sm danger" @click="deleteEnvironment(e.id)">
+                <i class="icon" data-lucide="trash-2"></i></button>
+            </div>
+          </template>
+          <div class="form-row mt-1">
+            <label>Name
+              <input type="text" x-model="envForm.name" placeholder="production">
+            </label>
+            <label>Inventory
+              <select x-model="envForm.inventory_path">
+                <option value="">(none)</option>
+                <template x-for="inv in (detected.inventories || [])" :key="`env-${inv}`">
+                  <option :value="inv" x-text="inv"></option>
+                </template>
+              </select>
+            </label>
+          </div>
+          <label>Default credential
+            <select x-model.number="envForm.default_credential_id">
+              <option value="0">— none —</option>
+              <template x-for="c in allCreds" :key="`envc-${c.id}`">
+                <option :value="c.id" x-text="`${c.kind}: ${c.name}`"></option>
+              </template>
+            </select>
+          </label>
+          <button type="button" class="btn-sm mt-1" @click="saveEnvironment()" :disabled="!envForm.name.trim()">
+            <i class="icon" data-lucide="plus"></i> Add environment
+          </button>
+        </div>
+
+        <template x-if="templates.length">
+          <label>Load from template
+            <select @change="loadTemplate($event.target.value)">
+              <option value="">— start from scratch —</option>
+              <template x-for="t in templates" :key="t.id">
+                <option :value="t.id" x-text="t.name"></option>
+              </template>
+            </select>
+          </label>
+        </template>
+
+        <div class="card" x-show="showSaveTpl" x-cloak style="background: var(--bg-elev-2); margin-bottom: 0.75rem;">
+          <h4>Save current parameters as a template</h4>
+          <label>Template name
+            <input type="text" x-model="saveTpl.name" placeholder="deploy-prod" required>
+          </label>
+          <label>Description (optional)
+            <input type="text" x-model="saveTpl.description">
+          </label>
+          <div class="row gap-sm">
+            <button @click="saveAsTemplate()" :disabled="!saveTpl.name">Save</button>
+            <button class="btn-secondary" @click="showSaveTpl = false">Cancel</button>
+          </div>
+        </div>
+
+        <form @submit.prevent="runPlaybook()">
+          <label>Playbook
+            <select x-model="runForm.playbook" required @change="loadTags()">
+              <option value="">— pick a playbook —</option>
+              <template x-for="pb in (detected.playbooks || [])" :key="pb">
+                <option :value="pb" x-text="pb"></option>
+              </template>
+            </select>
+          </label>
+          <label>Inventory
+            <select x-model="runForm.inventory" @change="loadInventoryHosts()">
+              <option value="">(default from ansible.cfg)</option>
+              <template x-for="inv in (detected.inventories || [])" :key="inv">
+                <option :value="inv" x-text="inv"></option>
+              </template>
+            </select>
+          </label>
+          <label>Tags
+            <template x-if="availableTags.length">
+              <div class="row wrap gap-sm mb-1">
+                <template x-for="t in availableTags" :key="t">
+                  <button type="button" class="tag-chip"
+                          :class="{active: selectedTags.includes(t)}"
+                          @click="toggleTag(t)" x-text="t"></button>
+                </template>
+              </div>
+            </template>
+            <template x-if="!availableTags.length && runForm.playbook">
+              <div class="text-xs muted mb-1">No tags found in this playbook — type them manually below if needed.</div>
+            </template>
+            <input type="text" x-model="customTagsRaw"
+                   :placeholder="availableTags.length ? 'or add custom tags (comma-separated)' : 'tags (comma-separated)'">
+          </label>
+          <label x-show="availableTags.length">
+            Skip tags
+            <div class="row wrap gap-sm">
+              <template x-for="t in availableTags" :key="`skip-${t}`">
+                <button type="button" class="tag-chip skip"
+                        :class="{active: selectedSkipTags.includes(t)}"
+                        @click="toggleSkipTag(t)" x-text="t"></button>
+              </template>
+            </div>
+          </label>
+          <label>Limit (host pattern)
+            <input type="text" x-model="runForm.limit" list="inv-targets" placeholder="webservers, web01.example.com">
+            <datalist id="inv-targets">
+              <template x-for="g in Object.keys(invData.groups || {})" :key="g">
+                <option :value="g"></option>
+              </template>
+              <template x-for="h in (invData.hosts || [])" :key="h">
+                <option :value="h"></option>
+              </template>
+            </datalist>
+          </label>
+          <template x-if="(invData.hosts || []).length || Object.keys(invData.groups || {}).length">
+            <div class="mb-2">
+              <div class="text-xs muted" style="margin-bottom: 0.3rem;">Quick-pick from inventory:</div>
+              <div class="row wrap gap-sm">
+                <template x-for="g in Object.keys(invData.groups || {})" :key="`g-${g}`">
+                  <button type="button" class="btn-secondary btn-sm" @click="runForm.limit = g" x-text="g"></button>
+                </template>
+                <template x-for="h in (invData.hosts || [])" :key="`h-${h}`">
+                  <button type="button" class="btn-ghost btn-sm font-mono" @click="runForm.limit = h" x-text="h"></button>
+                </template>
+              </div>
+            </div>
+          </template>
+          <template x-if="sshCreds.length">
+            <label>SSH credential (optional)
+              <select x-model.number="selectedCredentialId">
+                <option :value="0">— none (use defaults) —</option>
+                <template x-for="c in sshCreds" :key="c.id">
+                  <option :value="c.id" x-text="c.name + (c.description ? ' — ' + c.description : '')"></option>
+                </template>
+              </select>
+            </label>
+          </template>
+
+          <label>Verbosity
+            <select x-model.number="runForm.verbosity">
+              <option :value="0">0 — quiet</option>
+              <option :value="1">1 — -v (per-task output)</option>
+              <option :value="2">2 — -vv (module info)</option>
+              <option :value="3">3 — -vvv (connection debug)</option>
+              <option :value="4">4 — -vvvv (full debug)</option>
+            </select>
+          </label>
+
+          <div class="checkbox-row"><input type="checkbox" id="cm" x-model="runForm.checkMode"><label for="cm" style="margin:0; display:inline;">--check (dry run)</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="sx" x-model="runForm.syntaxOnly"><label for="sx" style="margin:0; display:inline;">--syntax-check</label></div>
+          <div class="row gap-sm mt-2">
+            <button type="submit" :disabled="running"><i class="icon" data-lucide="play"></i> Run</button>
+            <button type="button" class="btn-secondary" @click="previewRun()" :disabled="running || previewing || !runForm.playbook">
+              <i class="icon" data-lucide="eye"></i>
+              <span x-text="previewing ? 'Previewing…' : 'Preview (dry-run)'"></span>
+            </button>
+            <button type="button" class="btn-secondary" @click="ping()" :disabled="running"><i class="icon" data-lucide="radio"></i> Ping all</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card" x-show="preview" x-cloak>
+        <div class="card-header">
+          <h3>Preview — what would change</h3>
+          <button class="btn-secondary btn-sm" x-show="aiEnabled" @click="narratePlan()" :disabled="narrating">
+            <i class="icon" data-lucide="sparkles"></i>
+            <span x-text="narrating ? 'Asking…' : 'Explain (AI)'"></span>
+          </button>
+        </div>
+        <template x-if="preview && !preview.changes.length && !(preview.failures && preview.failures.length)">
+          <p class="text-sm" style="color: var(--ok,#3fb950);">✓ No changes — hosts already match the desired state (no drift).</p>
+        </template>
+        <template x-if="preview && preview.changes.length">
+          <div>
+            <p class="text-sm muted" x-text="`${preview.changes.length} task(s) would change:`"></p>
+            <table>
+              <thead><tr><th>Host</th><th>Task</th></tr></thead>
+              <tbody>
+                <template x-for="(c, i) in preview.changes" :key="i">
+                  <tr><td class="font-mono text-xs" x-text="c.host || '?'"></td><td class="text-sm" x-text="c.task || ''"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
+        <template x-if="preview && preview.failures && preview.failures.length">
+          <p class="text-sm" style="color: var(--fail,#f85149);">⚠️ Preview hit errors (e.g. unreachable host or a task that can't run in check mode): <span x-text="preview.failures.length"></span></p>
+        </template>
+        <div class="card mt-2" x-show="planNarration" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
+          <div class="row gap-sm" style="align-items: baseline;"><i class="icon" data-lucide="sparkles"></i><strong>AI summary</strong></div>
+          <p class="text-sm" style="white-space: pre-wrap;" x-text="planNarration"></p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Output</h3>
+          <div class="row gap-sm">
+            <div class="view-toggle">
+              <button :class="{active: !showRaw}" @click="showRaw = false">Tasks</button>
+              <button :class="{active: showRaw}" @click="showRaw = true">Raw</button>
+            </div>
+            <button class="btn-secondary btn-sm danger" x-show="running" @click="cancelRun()">
+              <i class="icon" data-lucide="square"></i> Cancel
+            </button>
+            <span x-show="running" class="badge run"><span class="dot run"></span> RUNNING</span>
+            <span x-show="summary" :class="`badge ${summaryBadgeClass()}`"
+                  x-text="summaryBadgeLabel()"></span>
+          </div>
+        </div>
+
+        <template x-if="!running && !logLines.length && !plays.length && !summary">
+          <div class="empty-state"><i class="icon" data-lucide="terminal"></i><p>Run output will appear here.</p></div>
+        </template>
+
+        <!-- Structured view -->
+        <div x-show="!showRaw && (plays.length || running)">
+          <template x-for="play in plays" :key="play.id">
+            <div class="play-block">
+              <div class="play-header">PLAY [<span x-text="play.name || '(unnamed)'"></span>]</div>
+              <template x-for="task in play.tasks" :key="task.id">
+                <div class="task-row" :class="{open: task.open, 'has-fail': task.hasFail, 'has-change': task.hasChange}">
+                  <div class="task-line" @click="task.open = !task.open">
+                    <span x-text="task.open ? '▾' : '▸'" class="muted text-xs"></span>
+                    <span class="task-name" x-text="task.name || '(unnamed task)'"></span>
+                    <div class="task-chips">
+                      <template x-for="(s, host) in task.hosts" :key="host">
+                        <span class="host-chip" :class="`status-${s.status}`" :title="`${host}: ${s.status}`" x-text="host"></span>
+                      </template>
+                    </div>
+                  </div>
+                  <div x-show="task.open" x-cloak class="task-detail">
+                    <template x-for="(s, host) in task.hosts" :key="host">
+                      <div class="host-result">
+                        <div class="host-result-head">
+                          <span class="host-chip" :class="`status-${s.status}`" x-text="s.status"></span>
+                          <strong x-text="host"></strong>
+                        </div>
+                        <pre x-show="s.output" x-text="s.output"></pre>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Raw log fallback -->
+        <pre class="log" x-ref="log" x-show="showRaw && logLines.length" x-text="logLines.join('\n')"></pre>
+
+        <template x-if="summary">
+          <div class="mt-2">
+            <h4>Per-host stats</h4>
+            <table>
+              <thead><tr><th>Host</th><th>ok</th><th>changed</th><th>failures</th><th>unreachable</th><th>skipped</th></tr></thead>
+              <tbody>
+                <template x-for="(s, host) in summary.hosts" :key="host">
+                  <tr>
+                    <td x-text="host"></td>
+                    <td x-text="s.ok || 0"></td>
+                    <td x-text="s.changed || 0"></td>
+                    <td x-text="s.failures || 0"></td>
+                    <td x-text="s.unreachable || 0"></td>
+                    <td x-text="s.skipped || 0"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+
+            <template x-if="failedHosts().length">
+              <div class="mt-1">
+                <button @click="replayFailed()">
+                  <i class="icon" data-lucide="rotate-ccw"></i>
+                  <span x-text="`Replay ${failedHosts().length} failed host(s)`"></span>
+                </button>
+              </div>
+            </template>
+
+            <template x-if="summary.failures.length">
+              <div class="mt-2">
+                <h4>Failures</h4>
+                <template x-for="(f, i) in summary.failures" :key="i">
+                  <div class="card" style="background:#1a0f12; border-color:#3d1d1d;">
+                    <div class="row between">
+                      <strong x-text="`${f.host || '?'} — ${f.task || ''}`"></strong>
+                      <button class="btn-secondary btn-sm" x-show="aiEnabled"
+                              @click="explainFailure(i, f)" :disabled="aiBusy[i]">
+                        <i class="icon" data-lucide="sparkles"></i>
+                        <span x-text="aiBusy[i] ? 'Asking…' : 'Explain (AI)'"></span>
+                      </button>
+                    </div>
+                    <pre class="log" x-text="(f.result && f.result.msg) || JSON.stringify(f.result, null, 2)"></pre>
+                    <template x-if="aiExplain[i]">
+                      <div class="card mt-1" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
+                        <div class="row gap-sm" style="align-items: baseline;">
+                          <i class="icon" data-lucide="sparkles"></i>
+                          <strong>AI explanation</strong>
+                          <span class="muted text-xs" x-text="aiExplain[i].model"></span>
+                          <template x-if="aiExplain[i].validation">
+                            <span :class="`badge ${confidenceBadge(aiExplain[i].validation.confidence)}`"
+                                  x-text="`${aiExplain[i].validation.confidence || ''} confidence`"></span>
+                          </template>
+                        </div>
+                        <p class="text-sm" style="white-space: pre-wrap;" x-text="aiExplain[i].explanation"></p>
+                        <template x-if="aiExplain[i].validation && (aiExplain[i].validation.unknown_modules || []).length">
+                          <div class="text-xs mt-1" style="color: var(--warn);">
+                            ⚠️ Modules referenced but not installed in this container:
+                            <code x-text="aiExplain[i].validation.unknown_modules.join(', ')"></code>
+                          </div>
+                        </template>
+                        <template x-if="aiExplain[i].validation && aiExplain[i].validation.self_critique && (aiExplain[i].validation.self_critique.unsupported_claims || []).length">
+                          <div class="text-xs mt-1">
+                            <div style="color: var(--warn);">⚠️ Claims a second AI pass couldn't ground in the failure record:</div>
+                            <ul style="padding-left: 1.25rem; margin: 0.25rem 0;">
+                              <template x-for="c in aiExplain[i].validation.self_critique.unsupported_claims" :key="c">
+                                <li class="muted" x-text="c"></li>
+                              </template>
+                            </ul>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div x-show="tab === 'history'" x-cloak>
+    <div class="card">
+      <template x-if="history.length === 0">
+        <div class="muted text-sm">No runs recorded yet for this project.</div>
+      </template>
+      <table x-show="history.length">
+        <thead><tr><th>Status</th><th>Playbook</th><th>Tags</th><th>Started</th><th>Duration</th></tr></thead>
+        <tbody>
+          <template x-for="r in history" :key="r.id">
+            <tr class="clickable" @click="window.location.href = `/projects/${projectId}/runs/${r.id}`">
+              <td><span :class="`badge ${historyBadge(r.status)}`" x-text="r.status"></span></td>
+              <td class="font-mono text-xs" x-text="r.playbook"></td>
+              <td class="text-xs muted" x-text="r.tags"></td>
+              <td class="text-xs muted" x-text="formatTime(r.started_at)"></td>
+              <td class="text-xs muted" x-text="duration(r)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</section>
+
+<script>
+function projectPage(projectId) {
+  // Non-reactive heavy objects live in closure scope, NOT on `this`.
+  // Alpine wraps top-level properties in Proxies for reactivity, which breaks
+  // Monaco editor (relies on internal `this` bindings) and stresses ws callbacks.
+  const heavy = { editor: null, monacoReady: null, ws: null, prevModel: null };
+
+  return {
+    projectId, tab: "overview",
+    flatTree: [], collapsedDirs: [], counts: {files: 0}, detected: {playbooks: [], inventories: [], roles: []},
+    selected: "", fileContent: "",
+    runForm: { playbook: "", inventory: "", limit: "", checkMode: false, syntaxOnly: false, verbosity: 0 },
+    availableTags: [], selectedTags: [], selectedSkipTags: [], customTagsRaw: "",
+    invData: { hosts: [], groups: {} },
+    running: false, logLines: [], plays: [], showRaw: false, summary: null, history: [],
+    preview: null, previewing: false, planNarration: "", narrating: false,
+    dirty: false, saving: false,
+    lintIssues: [], lintError: "", linting: false,
+    fileEncrypted: false, vaultBusy: false, vaultPlaintext: "",
+    vaultCreds: [], vaultCredId: 0,
+    templates: [], sshCreds: [], allCreds: [], selectedCredentialId: 0,
+    playbookTemplates: [],
+    environments: [], selectedEnvId: 0, showEnvMgr: false,
+    envForm: { name: "", inventory_path: "", default_credential_id: 0 },
+    galaxy: { requirements: null, requirements_path: "requirements.yml", installed: { roles: [], collections: [] }, busy: false, output: "", error: "", addKind: "collection", addName: "" },
+    git: { remote: null, branch: "", last_commit: null, dirty: false, remoteInput: "", username: "", token: "", busy: false, output: "", error: "" },
+    runbook: { md: "", busy: false, saving: false, saved: false, error: "" },
+    showSaveTpl: false, saveTpl: { name: "", description: "" },
+    _nextPlayId: 1, _nextTaskId: 1,
+    aiEnabled: false, aiExplain: {}, aiBusy: {},
+    invTab: { path: "", data: { hosts: [], groups: {} }, varsFiles: [] },
+    addForm: { name: "", group: "", host: "", user: "", port: "", extraRaw: "", busy: false, lastSaved: "" },
+    builder: {
+      open: false, mode: "form", path: "playbooks/new-playbook.yml",
+      spec: { name: "", hosts: "all", become: false, gather_facts: null,
+              become_user: "", serial: "", strategy: "", vars_yaml: "", tasks: [], handlers: [] },
+      jsonRaw: "", overwrite: false, busy: false, preview: "", error: "",
+      aiPrompt: "", aiBusy: false, aiError: "", aiValidation: null,
+    },
+
+    async load() {
+      const [treeR, detR, histR, tplR, credR, aiR] = await Promise.all([
+        fetch(`/api/projects/${this.projectId}/tree`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/projects/${this.projectId}/detected`).then(r => r.ok ? r.json() : {}),
+        fetch(`/api/projects/${this.projectId}/runs`).then(r => r.ok ? r.json() : []),
+        fetch(`/api/projects/${this.projectId}/templates`).then(r => r.ok ? r.json() : []),
+        fetch(`/api/credentials`).then(r => r.ok ? r.json() : []),
+        fetch(`/api/ai/status`).then(r => r.ok ? r.json() : {enabled: false}),
+      ]);
+      this.aiEnabled = !!aiR.enabled;
+      if (treeR === null) { alert("Project not found"); return; }
+      this.flatTree = this.flatten(treeR.tree, "", 0);
+      this.counts.files = this.flatTree.filter(n => !n.isDir).length;
+      this.detected = detR || {playbooks: [], inventories: [], roles: []};
+      this.history = histR || [];
+      this.templates = tplR || [];
+      this.allCreds = credR || [];
+      this.sshCreds = (credR || []).filter(c => c.kind === "ssh_key");
+      this.vaultCreds = (credR || []).filter(c => c.kind === "vault_password");
+      if (this.vaultCreds.length && !this.vaultCredId) this.vaultCredId = this.vaultCreds[0].id;
+      await this.loadEnvironments();
+      // Default to a detected playbook (prefer a top-level/site.yml), so flat-layout
+      // projects like ssh_playbook (playbook in the repo root) pre-select correctly
+      // instead of a non-existent "playbooks/site.yml".
+      if (!this.runForm.playbook && (this.detected.playbooks || []).length) {
+        const pbs = this.detected.playbooks;
+        this.runForm.playbook = pbs.find(p => /(^|\/)site\.ya?ml$/.test(p)) || pbs[0];
+      }
+      if (!this.runForm.inventory && (this.detected.inventories || []).length) {
+        this.runForm.inventory = this.detected.inventories[0];
+      }
+      await this.loadInventoryHosts();
+      await this.loadTags();
+      this.playbookTemplates = await fetch("/api/library/playbook-templates")
+        .then(r => r.ok ? r.json() : []).catch(() => []);
+      await this.loadGalaxy();
+      await this.loadGit();
+      this.$nextTick(() => lucide.createIcons());
+    },
+
+    async loadGit() {
+      const d = await fetch(`/api/projects/${this.projectId}/git`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      if (d) {
+        this.git.remote = d.remote; this.git.branch = d.branch;
+        this.git.last_commit = d.last_commit; this.git.dirty = d.dirty;
+        if (d.remote && !this.git.remoteInput) this.git.remoteInput = d.remote;
+      }
+    },
+    async gitSetRemote() {
+      this.git.busy = true; this.git.error = ""; this.git.output = "";
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/git/remote`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({url: this.git.remoteInput}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.git.error = d.detail || "failed"; return; }
+        this.git.remote = d.remote; this.git.branch = d.branch; this.git.last_commit = d.last_commit;
+        this.git.output = "Remote saved.";
+      } finally { this.git.busy = false; }
+    },
+    async _gitOp(op) {
+      this.git.busy = true; this.git.error = ""; this.git.output = "";
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/git/${op}`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({username: this.git.username || null, token: this.git.token || null}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.git.error = d.detail || `${op} failed`; return; }
+        this.git.output = d.output || `${op} ok`;
+        if (d.info) { this.git.last_commit = d.info.last_commit; this.git.dirty = d.info.dirty; }
+        if (op === "pull") await this.load();  // refresh tree/files after pulling
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.git.busy = false; }
+    },
+    gitPush() { return this._gitOp("push"); },
+    gitPull() { return this._gitOp("pull"); },
+
+    async genRunbook() {
+      if (this.runbook.busy) return;
+      this.runbook.busy = true; this.runbook.error = ""; this.runbook.saved = false;
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/runbook`, {method: "POST"});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.runbook.error = d.detail || "generation failed"; return; }
+        this.runbook.md = d.markdown || "(empty)";
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.runbook.busy = false; }
+    },
+    async saveRunbook() {
+      if (!this.runbook.md || this.runbook.saving) return;
+      this.runbook.saving = true;
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/file`, {
+          method: "PUT", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: "docs/RUNBOOK.md", content: this.runbook.md, message: "Update AI runbook"}),
+        });
+        if (!r.ok) { alert(await r.text()); return; }
+        this.runbook.saved = true; await this.load();
+      } finally { this.runbook.saving = false; }
+    },
+    async loadGalaxy() {
+      const d = await fetch(`/api/projects/${this.projectId}/galaxy`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      if (d) {
+        this.galaxy.requirements = d.requirements;
+        this.galaxy.requirements_path = d.requirements_path || "requirements.yml";
+        this.galaxy.installed = d.installed || { roles: [], collections: [] };
+      }
+    },
+    async galaxyInstall() {
+      if (this.galaxy.busy) return;
+      this.galaxy.busy = true; this.galaxy.error = ""; this.galaxy.output = "";
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/galaxy/install`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({requirements_path: this.galaxy.requirements_path}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.galaxy.error = d.detail || "install failed"; return; }
+        this.galaxy.output = d.output || "(done)";
+        this.galaxy.installed = d.installed || this.galaxy.installed;
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.galaxy.busy = false; }
+    },
+    async galaxyAdd() {
+      const name = (this.galaxy.addName || "").trim();
+      if (!name || this.galaxy.busy) return;
+      this.galaxy.busy = true; this.galaxy.error = ""; this.galaxy.output = "";
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/galaxy/add`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({kind: this.galaxy.addKind, name}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.galaxy.error = d.detail || "install failed"; return; }
+        this.galaxy.output = d.output || "(done)";
+        this.galaxy.installed = d.installed || this.galaxy.installed;
+        this.galaxy.addName = "";
+        await this.loadGalaxy();  // refresh requirements.yml preview
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.galaxy.busy = false; }
+    },
+    async galaxyRemove(kind, name) {
+      if (this.galaxy.busy) return;
+      if (!confirm(`Remove ${kind} ${name} from this project?`)) return;
+      this.galaxy.busy = true; this.galaxy.error = ""; this.galaxy.output = "";
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/galaxy/remove`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({kind, name}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.galaxy.error = d.detail || "remove failed"; return; }
+        this.galaxy.installed = d.installed || this.galaxy.installed;
+        await this.loadGalaxy();
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.galaxy.busy = false; }
+    },
+
+    async loadTags() {
+      if (!this.runForm.playbook) { this.availableTags = []; return; }
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/tags?playbook=${encodeURIComponent(this.runForm.playbook)}`);
+        if (r.ok) this.availableTags = (await r.json()).tags || [];
+        else this.availableTags = [];
+      } catch { this.availableTags = []; }
+    },
+    toggleTag(t) {
+      this.selectedTags = this.selectedTags.includes(t)
+        ? this.selectedTags.filter(x => x !== t)
+        : [...this.selectedTags, t];
+      // Picking a tag for inclusion implicitly un-skips it.
+      this.selectedSkipTags = this.selectedSkipTags.filter(x => x !== t);
+    },
+    toggleSkipTag(t) {
+      this.selectedSkipTags = this.selectedSkipTags.includes(t)
+        ? this.selectedSkipTags.filter(x => x !== t)
+        : [...this.selectedSkipTags, t];
+      this.selectedTags = this.selectedTags.filter(x => x !== t);
+    },
+    computeTags() {
+      const custom = (this.customTagsRaw || "").split(",").map(s => s.trim()).filter(Boolean);
+      return [...new Set([...this.selectedTags, ...custom])];
+    },
+
+    async loadInventoryHosts() {
+      if (!this.runForm.inventory) { this.invData = {hosts: [], groups: {}}; return; }
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/inventory?path=${encodeURIComponent(this.runForm.inventory)}`);
+        if (r.ok) this.invData = await r.json();
+        else this.invData = {hosts: [], groups: {}};
+      } catch { this.invData = {hosts: [], groups: {}}; }
+    },
+
+    async loadEnvironments() {
+      this.environments = await fetch(`/api/projects/${this.projectId}/environments`)
+        .then(r => r.ok ? r.json() : []).catch(() => []);
+    },
+    applyEnvironment(idStr) {
+      const id = parseInt(idStr, 10) || 0;
+      const e = this.environments.find(x => x.id === id);
+      if (!e) return;  // "— none —" leaves current params untouched
+      if (e.inventory_path) this.runForm.inventory = e.inventory_path;
+      if (e.default_credential_id) this.selectedCredentialId = e.default_credential_id;
+      this.loadInventoryHosts();
+    },
+    async saveEnvironment() {
+      if (!this.envForm.name.trim()) return;
+      const body = {
+        name: this.envForm.name.trim(),
+        inventory_path: this.envForm.inventory_path || "",
+        default_credential_id: this.envForm.default_credential_id || null,
+      };
+      const r = await fetch(`/api/projects/${this.projectId}/environments`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { alert(await r.text()); return; }
+      this.envForm = { name: "", inventory_path: "", default_credential_id: 0 };
+      await this.loadEnvironments();
+      this.$nextTick(() => lucide.createIcons());
+    },
+    async deleteEnvironment(id) {
+      if (!confirm("Delete this environment?")) return;
+      await fetch(`/api/projects/${this.projectId}/environments/${id}`, {method: "DELETE"});
+      if (this.selectedEnvId === id) this.selectedEnvId = 0;
+      await this.loadEnvironments();
+      this.$nextTick(() => lucide.createIcons());
+    },
+
+    async loadTemplate(idStr) {
+      const id = parseInt(idStr, 10);
+      const t = this.templates.find(x => x.id === id);
+      if (!t) return;
+      this.runForm.playbook = t.playbook;
+      this.runForm.inventory = t.inventory;
+      this.runForm.limit = t.limit || "";
+      this.runForm.checkMode = !!t.check;
+      this.runForm.syntaxOnly = !!t.syntax_check;
+      this.selectedCredentialId = (t.credential_ids || [])[0] || 0;
+      // Tags come from the template; load available list, then pre-select the template's choices
+      // (drop any custom tags that aren't in the playbook into the free-text field instead).
+      await this.loadTags();
+      const known = new Set(this.availableTags);
+      this.selectedTags = (t.tags || []).filter(x => known.has(x));
+      this.customTagsRaw = (t.tags || []).filter(x => !known.has(x)).join(",");
+      this.selectedSkipTags = (t.skip_tags || []).filter(x => known.has(x));
+      this.loadInventoryHosts();
+    },
+
+    // ---- Structured log: turn raw event stream into plays → tasks → hosts ----
+    _resetOutput() {
+      this.plays = []; this.logLines = []; this.summary = null;
+      this._nextPlayId = 1; this._nextTaskId = 1;
+    },
+    _currentTask() {
+      const play = this.plays.at(-1);
+      return play ? play.tasks.at(-1) : null;
+    },
+    _ingestEvent(msg) {
+      const ev = msg.event;
+      const ed = msg.event_data || {};
+
+      if (ev === "playbook_on_play_start") {
+        this.plays.push({ id: this._nextPlayId++, name: ed.name || ed.play || "", tasks: [] });
+        return;
+      }
+      if (ev === "playbook_on_task_start" || ev === "playbook_on_handler_task_start") {
+        if (!this.plays.length) this.plays.push({id: this._nextPlayId++, name: "", tasks: []});
+        this.plays.at(-1).tasks.push({
+          id: this._nextTaskId++, name: ed.task || ed.name || "",
+          hosts: {}, open: false, hasFail: false, hasChange: false,
+        });
+        return;
+      }
+      if (ev === "runner_on_ok" || ev === "runner_on_failed"
+          || ev === "runner_on_unreachable" || ev === "runner_on_skipped") {
+        const task = this._currentTask();
+        if (!task || !ed.host) return;
+        const res = ed.res || {};
+        let status = "ok";
+        if (ev === "runner_on_failed") status = "failed";
+        else if (ev === "runner_on_unreachable") status = "unreachable";
+        else if (ev === "runner_on_skipped") status = "skipped";
+        else if (res.changed) status = "changed";
+        task.hosts[ed.host] = { status, output: (msg.stdout || "").trim() };
+        if (status === "failed" || status === "unreachable") {
+          task.hasFail = true; task.open = true;  // auto-expand failures
+        }
+        if (status === "changed") task.hasChange = true;
+      }
+    },
+
+    async previewRun() {
+      if (this.previewing || !this.runForm.playbook) return;
+      this.previewing = true; this.preview = null; this.planNarration = "";
+      try {
+        const body = {
+          project_id: this.projectId, playbook: this.runForm.playbook,
+          inventory: this.runForm.inventory, tags: this.computeTags(),
+          skip_tags: this.selectedSkipTags, limit: this.runForm.limit,
+          credential_ids: this.selectedCredentialId ? [this.selectedCredentialId] : [],
+        };
+        const r = await fetch("/api/runs/preview", {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.detail || "preview failed"); return; }
+        this.preview = d;
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.previewing = false; }
+    },
+    async narratePlan() {
+      if (!this.preview || this.narrating) return;
+      this.narrating = true; this.planNarration = "";
+      try {
+        const r = await fetch("/api/ai/narrate-plan", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({changes: this.preview.changes || [], playbook: this.runForm.playbook}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.detail || "narration failed"); return; }
+        this.planNarration = d.narration || "(no summary)";
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.narrating = false; }
+    },
+    cancelRun() {
+      if (heavy.ws && heavy.ws.readyState === WebSocket.OPEN) {
+        heavy.ws.send(JSON.stringify({ action: "cancel" }));
+      }
+    },
+
+    summaryBadgeClass() {
+      if (!this.summary) return "muted";
+      if (this.summary.canceled) return "warn";
+      return this.summary.overall === "ok" ? "ok" : "fail";
+    },
+    summaryBadgeLabel() {
+      if (!this.summary) return "";
+      if (this.summary.canceled) return "CANCELED";
+      return (this.summary.overall || "").toUpperCase();
+    },
+
+    failedHosts() {
+      if (!this.summary) return [];
+      return [...new Set((this.summary.failures || [])
+        .map(f => f.host).filter(Boolean))];
+    },
+    replayFailed() {
+      const hosts = this.failedHosts();
+      if (!hosts.length) return;
+      this.runForm.limit = hosts.join(":");
+      this.runPlaybook();
+    },
+
+    async saveAsTemplate() {
+      const body = {
+        name: this.saveTpl.name, description: this.saveTpl.description,
+        playbook: this.runForm.playbook, inventory: this.runForm.inventory,
+        tags: this.computeTags(),
+        skip_tags: [...this.selectedSkipTags],
+        limit: this.runForm.limit, check: this.runForm.checkMode, syntax_check: this.runForm.syntaxOnly,
+        credential_ids: this.selectedCredentialId ? [this.selectedCredentialId] : [],
+      };
+      const r = await fetch(`/api/projects/${this.projectId}/templates`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+      });
+      if (!r.ok) { alert(await r.text()); return; }
+      this.showSaveTpl = false; this.saveTpl = { name: "", description: "" };
+      const tplR = await fetch(`/api/projects/${this.projectId}/templates`);
+      this.templates = await tplR.json();
+    },
+    // Hide any node that lives under a collapsed directory.
+    visibleTree() {
+      const collapsed = this.collapsedDirs;
+      if (!collapsed.length) return this.flatTree;
+      return this.flatTree.filter(n =>
+        !collapsed.some(d => n.path !== d && n.path.startsWith(d + "/")));
+    },
+    toggleDir(path) {
+      this.collapsedDirs = this.collapsedDirs.includes(path)
+        ? this.collapsedDirs.filter(d => d !== path)
+        : [...this.collapsedDirs, path];
+    },
+    collapseAll() {
+      this.collapsedDirs = this.flatTree.filter(n => n.isDir).map(n => n.path);
+    },
+    flatten(tree, prefix, depth) {
+      const out = [];
+      const entries = Object.entries(tree).sort(([a, av], [b, bv]) => {
+        const ad = av !== null, bd = bv !== null;
+        if (ad !== bd) return ad ? -1 : 1;
+        return a.localeCompare(b);
+      });
+      for (const [name, child] of entries) {
+        const path = prefix ? `${prefix}/${name}` : name;
+        if (child === null) out.push({name, path, depth, isDir: false});
+        else { out.push({name, path, depth, isDir: true}); out.push(...this.flatten(child, path, depth + 1)); }
+      }
+      return out;
+    },
+    ensureMonaco() {
+      if (heavy.monacoReady) return heavy.monacoReady;
+      heavy.monacoReady = new Promise((resolve) => {
+        const cdn = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs";
+        const boot = () => {
+          window.require.config({ paths: { vs: cdn }});
+          window.require(["vs/editor/editor.main"], () => resolve(window.monaco));
+        };
+        if (window.monaco) return resolve(window.monaco);
+        if (window.require) return boot();
+        const s = document.createElement("script");
+        s.src = `${cdn}/loader.js`; s.onload = boot; document.head.appendChild(s);
+      });
+      return heavy.monacoReady;
+    },
+
+    languageFor(path) {
+      const lower = path.toLowerCase();
+      if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return "yaml";
+      if (lower.endsWith(".json")) return "json";
+      if (lower.endsWith(".ini") || lower.endsWith(".cfg") || lower.endsWith("hosts")) return "ini";
+      if (lower.endsWith(".sh")) return "shell";
+      if (lower.endsWith(".md")) return "markdown";
+      if (lower.endsWith(".py")) return "python";
+      return "plaintext";
+    },
+
+    async openFile(path) {
+      this.selected = path;
+      this.lintIssues = []; this.lintError = "";
+      const setDirty = () => { this.dirty = true; };
+
+      const r = await fetch(`/api/projects/${this.projectId}/file?path=${encodeURIComponent(path)}`);
+      if (!r.ok) { alert(`Cannot open ${path}`); return; }
+      const content = (await r.json()).content;
+      this.fileEncrypted = content.trimStart().startsWith("$ANSIBLE_VAULT");
+      this.vaultPlaintext = "";
+
+      const monaco = await this.ensureMonaco();
+      const lang = this.languageFor(path);
+
+      if (!heavy.editor) {
+        heavy.editor = monaco.editor.create(this.$refs.editor, {
+          value: content, language: lang,
+          theme: "vs-dark", automaticLayout: true,
+          minimap: { enabled: false }, fontSize: 13,
+          scrollBeyondLastLine: false, tabSize: 2, insertSpaces: true,
+        });
+        heavy.editor.onDidChangeModelContent(setDirty);
+        heavy.prevModel = heavy.editor.getModel();
+      } else {
+        const newModel = monaco.editor.createModel(content, lang);
+        heavy.editor.setModel(newModel);
+        // Dispose the previous model to avoid memory growth on rapid file switching.
+        const old = heavy.prevModel;
+        heavy.prevModel = newModel;
+        if (old) try { old.dispose(); } catch (e) { /* ignore */ }
+      }
+
+      this.dirty = false;
+      this.applyLintMarkers([]);
+
+      // Auto-lint YAML files on open (fire-and-forget) so issues show without a click.
+      // Skip non-YAML and vault-encrypted files (ansible-lint can't read ciphertext).
+      if (!this.fileEncrypted && /\.ya?ml$/i.test(path)) {
+        this.runLint();
+      }
+    },
+
+    async saveFile() {
+      if (!this.selected || !heavy.editor) return;
+      this.saving = true;
+      const content = heavy.editor.getValue();
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/file`, {
+          method: "PUT", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: this.selected, content}),
+        });
+        if (!r.ok) { alert(await r.text()); return; }
+        this.dirty = false;
+      } finally { this.saving = false; }
+      // Fire-and-forget: lint and tree refresh happen in the background so the
+      // Save button frees up immediately. UI updates as each one finishes.
+      this.runLint();
+      this.load();
+    },
+
+    async runLint() {
+      if (!this.selected) return;
+      this.linting = true; this.lintError = "";
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/lint?path=${encodeURIComponent(this.selected)}`,
+          { method: "POST" });
+        if (!r.ok) { this.lintError = await r.text(); this.lintIssues = []; this.applyLintMarkers([]); return; }
+        const data = await r.json();
+        if (data.error) { this.lintError = data.error; this.lintIssues = []; }
+        else { this.lintIssues = data.issues || []; }
+        this.applyLintMarkers(this.lintIssues);
+      } catch (e) {
+        this.lintError = String(e); this.lintIssues = [];
+      } finally { this.linting = false; }
+    },
+
+    // ---- Ansible Vault (in-repo secrets) ----
+    async _vaultPost(action, body) {
+      const r = await fetch(`/api/projects/${this.projectId}/vault/${action}`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({credential_id: this.vaultCredId, ...body}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || `vault ${action} failed`);
+      return data;
+    },
+    async vaultEncrypt() {
+      if (!this.vaultCredId) { alert("Pick a vault password credential first."); return; }
+      if (this.dirty && !confirm("Unsaved edits are not on disk yet and won't be encrypted. Encrypt the saved version anyway?")) return;
+      this.vaultBusy = true;
+      try {
+        await this._vaultPost("encrypt", {path: this.selected});
+        await this.openFile(this.selected);  // reload → shows ciphertext + encrypted state
+      } catch (e) { alert(e.message); } finally { this.vaultBusy = false; }
+    },
+    async vaultDecrypt() {
+      if (!this.vaultCredId) { alert("Pick a vault password credential first."); return; }
+      this.vaultBusy = true;
+      try {
+        await this._vaultPost("decrypt", {path: this.selected});
+        await this.openFile(this.selected);  // reload → now editable plaintext
+      } catch (e) { alert(e.message); } finally { this.vaultBusy = false; }
+    },
+    async vaultView() {
+      if (!this.vaultCredId) { alert("Pick a vault password credential first."); return; }
+      this.vaultBusy = true;
+      try {
+        const data = await this._vaultPost("view", {path: this.selected});
+        this.vaultPlaintext = data.plaintext || "(empty)";
+        this.$nextTick(() => lucide.createIcons());
+      } catch (e) { alert(e.message); } finally { this.vaultBusy = false; }
+    },
+
+    applyLintMarkers(issues) {
+      if (!heavy.editor || !window.monaco) return;
+      const sev = {
+        error: window.monaco.MarkerSeverity.Error,
+        warning: window.monaco.MarkerSeverity.Warning,
+        info: window.monaco.MarkerSeverity.Info,
+      };
+      const markers = issues.map(it => ({
+        severity: sev[it.monaco_severity] || sev.info,
+        message: `${it.rule}: ${it.description}`,
+        startLineNumber: it.line, startColumn: it.column,
+        endLineNumber: it.end_line || it.line, endColumn: it.end_column || (it.column + 20),
+      }));
+      window.monaco.editor.setModelMarkers(heavy.editor.getModel(), "ansible-lint", markers);
+    },
+
+    jumpTo(line, column) {
+      if (!heavy.editor) return;
+      heavy.editor.revealLineInCenter(line);
+      heavy.editor.setPosition({ lineNumber: line, column });
+      heavy.editor.focus();
+    },
+
+    runPlaybook() {
+      if (this.running) return;
+      this.running = true; this._resetOutput();
+      const tags = this.computeTags();
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      heavy.ws = new WebSocket(`${proto}//${location.host}/api/runs/ws`);
+      heavy.ws.onopen = () => heavy.ws.send(JSON.stringify({
+        project_id: this.projectId, playbook: this.runForm.playbook,
+        inventory: this.runForm.inventory, tags,
+        skip_tags: [...this.selectedSkipTags],
+        limit: this.runForm.limit, check: this.runForm.checkMode, syntax_check: this.runForm.syntaxOnly,
+        verbosity: this.runForm.verbosity || 0,
+        // [] = "explicitly no credentials" (the UI choice "— none —"); the API tells these
+        // apart from "field omitted" so user can opt out of a template's credentials.
+        credential_ids: this.selectedCredentialId ? [this.selectedCredentialId] : [],
+      }));
+      heavy.ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.event === "summary") { this.summary = msg; this.running = false; this.load(); return; }
+        if (msg.event === "error") { this.logLines.push(`[error] ${msg.message}`); this.running = false; return; }
+        // Build the structured view from the event stream.
+        this._ingestEvent(msg);
+        // Keep a raw stream too, so users can fall back to it via the toggle.
+        const line = msg.stdout || "";
+        if (line && line.trim()) this.logLines.push(line);
+        this.$nextTick(() => { if (this.$refs.log) this.$refs.log.scrollTop = this.$refs.log.scrollHeight; });
+      };
+      heavy.ws.onclose = () => { this.running = false; };
+    },
+
+    async ping() {
+      this.logLines = []; this.summary = null;
+      const r = await fetch("/api/runs/adhoc", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({project_id: this.projectId, host_pattern: "all", module: "ping", inventory: this.runForm.inventory}),
+      });
+      this.summary = await r.json();
+    },
+
+    formatTime(iso) { if (!iso) return ""; return new Date(iso).toLocaleString(); },
+    duration(r) {
+      if (!r.ended_at || !r.started_at) return "—";
+      const ms = new Date(r.ended_at) - new Date(r.started_at);
+      const s = Math.round(ms / 1000);
+      return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+    },
+    historyBadge(s) {
+      if (s === "ok" || s === "successful") return "ok";
+      if (s === "canceled") return "warn";
+      if (s === "failed") return "fail";
+      if (s === "running") return "run";
+      return "muted";
+    },
+    confidenceBadge(c) {
+      if (c === "high") return "ok";
+      if (c === "low") return "fail";
+      return "warn";
+    },
+
+    async loadInvTabData() {
+      if (!this.invTab.path && (this.detected.inventories || []).length) {
+        this.invTab.path = this.detected.inventories[0];
+      }
+      if (!this.invTab.path) { this.invTab.data = {hosts: [], groups: {}}; this.invTab.varsFiles = []; return; }
+      const r = await fetch(`/api/projects/${this.projectId}/inventory?path=${encodeURIComponent(this.invTab.path)}`);
+      this.invTab.data = r.ok ? await r.json() : {hosts: [], groups: {}};
+      // Surface vars files under the chosen inventory's directory.
+      const invDir = this.invTab.path.endsWith("/hosts") ? this.invTab.path.slice(0, -"/hosts".length) : this.invTab.path;
+      this.invTab.varsFiles = this.flatTree
+        .filter(n => !n.isDir && (n.path.startsWith(invDir + "/group_vars/") || n.path.startsWith(invDir + "/host_vars/")))
+        .map(n => n.path);
+      this.$nextTick(() => lucide.createIcons());
+    },
+
+    hostGroups(host) {
+      const groups = this.invTab.data.groups || {};
+      return Object.entries(groups)
+        .filter(([name, g]) => name !== "all" && (g.hosts || []).includes(host))
+        .map(([name]) => name);
+    },
+
+    addTaskRow() {
+      this.builder.spec.tasks.push({
+        name: "", module: "ansible.builtin.debug", args_yaml: "", tags_raw: "", when: "",
+        become: false, become_user: "", loop: "", register: "", notify: "",
+      });
+    },
+    addHandlerRow() {
+      if (!this.builder.spec.handlers) this.builder.spec.handlers = [];
+      this.builder.spec.handlers.push({ name: "", module: "ansible.builtin.service", args_yaml: "" });
+    },
+    async generateFromAI() {
+      if (this.builder.aiBusy || !this.builder.aiPrompt.trim()) return;
+      this.builder.aiBusy = true; this.builder.aiError = ""; this.builder.aiValidation = null;
+      try {
+        const r = await fetch("/api/ai/generate-playbook", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({description: this.builder.aiPrompt, hosts: this.builder.spec.hosts || ""}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.builder.aiError = d.detail || "generation failed"; return; }
+        const s = d.spec || {};
+        // Load into the form (tasks already carry tags arrays → map to the form's tags_raw).
+        this.builder.spec = {
+          name: s.name || "", hosts: s.hosts || "all",
+          become: !!s.become, gather_facts: s.gather_facts === false ? false : null,
+          tasks: (s.tasks || []).map(t => ({
+            name: t.name || "", module: t.module || "", args_yaml: t.args_yaml || "",
+            tags_raw: Array.isArray(t.tags) ? t.tags.join(", ") : (t.tags || ""), when: t.when || "",
+          })),
+        };
+        this.builder.preview = d.yaml || "";
+        this.builder.aiValidation = d.validation || null;
+        this.builder.mode = "form";  // hand off to the form for review/edit
+        this.$nextTick(() => lucide.createIcons());
+      } finally { this.builder.aiBusy = false; }
+    },
+    loadPlaybookTemplate(id) {
+      if (!id) return;
+      const tpl = this.playbookTemplates.find(t => t.id === id);
+      if (!tpl) return;
+      const s = tpl.spec || {};
+      // Map the canonical spec into the form's shape (tags list -> tags_raw string).
+      this.builder.spec = {
+        name: s.name || "", hosts: s.hosts || "all",
+        become: !!s.become, gather_facts: s.gather_facts === false ? false : null,
+        become_user: s.become_user || "", serial: s.serial || "", strategy: s.strategy || "",
+        vars_yaml: s.vars_yaml || "",
+        tasks: (s.tasks || []).map(t => ({
+          name: t.name || "", module: t.module || "",
+          args_yaml: t.args_yaml || "",
+          tags_raw: Array.isArray(t.tags) ? t.tags.join(", ") : (t.tags || ""),
+          when: t.when || "",
+          become: !!t.become, become_user: t.become_user || "",
+          loop: t.loop || "", register: t.register || "", notify: t.notify || "",
+        })),
+        handlers: (s.handlers || []).map(h => ({ name: h.name || "", module: h.module || "", args_yaml: h.args_yaml || "" })),
+      };
+      if (!this.builder.path || this.builder.path === "playbooks/new-playbook.yml") {
+        this.builder.path = `playbooks/${id}.yml`;
+      }
+      this.builder.mode = "form";
+      this.builder.preview = ""; this.builder.error = "";
+      this.$nextTick(() => lucide.createIcons());
+    },
+    _buildSpec() {
+      if (this.builder.mode === "json") {
+        const raw = (this.builder.jsonRaw || "").trim();
+        if (!raw) throw new Error("JSON is empty");
+        return JSON.parse(raw);
+      }
+      const spec = { ...this.builder.spec };
+      spec.tasks = (spec.tasks || []).map(t => ({
+        name: t.name,
+        module: t.module,
+        args_yaml: t.args_yaml || "",
+        tags: (t.tags_raw || "").split(",").map(s => s.trim()).filter(Boolean),
+        when: t.when || "",
+        become: !!t.become,
+        become_user: t.become_user || "",
+        loop: t.loop || "",
+        register: t.register || "",
+        notify: t.notify || "",
+      }));
+      spec.handlers = (spec.handlers || [])
+        .filter(h => (h.name || "").trim() && (h.module || "").trim())
+        .map(h => ({ name: h.name, module: h.module, args_yaml: h.args_yaml || "" }));
+      return spec;
+    },
+    async previewPlaybook() {
+      this.builder.error = ""; this.builder.preview = "";
+      let spec;
+      try { spec = this._buildSpec(); }
+      catch (e) { this.builder.error = `Spec error: ${e.message}`; return; }
+      const r = await fetch(`/api/projects/${this.projectId}/playbook/preview`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: this.builder.path, spec}),
+      });
+      if (!r.ok) { this.builder.error = await r.text(); return; }
+      this.builder.preview = (await r.json()).yaml;
+    },
+    async savePlaybook() {
+      if (this.builder.busy) return;
+      this.builder.busy = true; this.builder.error = "";
+      try {
+        let spec;
+        try { spec = this._buildSpec(); }
+        catch (e) { this.builder.error = `Spec error: ${e.message}`; return; }
+        const r = await fetch(`/api/projects/${this.projectId}/playbook`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: this.builder.path, spec, overwrite: this.builder.overwrite}),
+        });
+        if (!r.ok) { this.builder.error = await r.text(); return; }
+        const data = await r.json();
+        this.builder.preview = data.yaml;
+        this.builder.open = false;
+        await this.load();
+      } finally { this.builder.busy = false; }
+    },
+
+    async addHost() {
+      if (this.addForm.busy) return;
+      this.addForm.busy = true; this.addForm.lastSaved = "";
+      try {
+        const vars = {};
+        if (this.addForm.host) vars.ansible_host = this.addForm.host;
+        if (this.addForm.user) vars.ansible_user = this.addForm.user;
+        if (this.addForm.port) vars.ansible_port = this.addForm.port;
+        for (const line of (this.addForm.extraRaw || "").split("\n")) {
+          const t = line.trim();
+          if (!t || t.startsWith("#")) continue;
+          const eq = t.indexOf("=");
+          if (eq > 0) vars[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+        }
+        const body = {
+          inventory_path: this.invTab.path,
+          name: this.addForm.name.trim(),
+          group: this.addForm.group.trim(),
+          vars,
+        };
+        const r = await fetch(`/api/projects/${this.projectId}/inventory/host`, {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+        });
+        if (!r.ok) { alert(await r.text()); return; }
+        const data = await r.json();
+        this.addForm.lastSaved = data.saved
+          ? `Saved: ${data.host_line}`
+          : (data.note || "no change");
+        this.addForm.name = ""; this.addForm.host = ""; this.addForm.user = ""; this.addForm.port = ""; this.addForm.extraRaw = "";
+        await this.loadInvTabData();
+        await this.loadInventoryHosts();
+      } finally { this.addForm.busy = false; }
+    },
+
+    async explainFailure(idx, failure) {
+      if (this.aiBusy[idx]) return;
+      this.aiBusy = { ...this.aiBusy, [idx]: true };
+      try {
+        const r = await fetch("/api/ai/explain-failure", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({failure, playbook: this.runForm.playbook}),
+        });
+        if (!r.ok) { alert(await r.text()); return; }
+        const data = await r.json();
+        this.aiExplain = { ...this.aiExplain, [idx]: data };
+      } finally {
+        this.aiBusy = { ...this.aiBusy, [idx]: false };
+        this.$nextTick(() => lucide.createIcons());
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

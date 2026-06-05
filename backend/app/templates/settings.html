@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block title %}Settings — Playforge{% endblock %}
+{% block breadcrumb %}<span>Settings</span>{% endblock %}
+{% block content %}
+<section x-data="settingsPage()" x-init="load()">
+
+  <div class="card">
+    <h3>AI helper</h3>
+    <div class="row gap-md" style="align-items: baseline;">
+      <span :class="`badge ${ai.enabled ? 'ok' : 'muted'}`" x-text="ai.enabled ? 'Enabled' : 'Disabled'"></span>
+      <template x-if="ai.enabled">
+        <span class="badge run" x-text="(ai.provider || '').toUpperCase()"></span>
+      </template>
+      <span class="muted text-sm">Active model:</span>
+      <span class="font-mono text-sm" x-text="ai.model || '—'"></span>
+    </div>
+
+    <hr class="mt-2 mb-2" />
+
+    <h4>Provider</h4>
+    <div class="row gap-md mt-1" style="flex-wrap: wrap;">
+      <label class="row gap-xs" style="align-items: center;">
+        <input type="radio" value="auto" x-model="cfg['ai.provider']" /> Auto
+      </label>
+      <label class="row gap-xs" style="align-items: center;">
+        <input type="radio" value="anthropic" x-model="cfg['ai.provider']" /> Anthropic Claude
+      </label>
+      <label class="row gap-xs" style="align-items: center;">
+        <input type="radio" value="openai" x-model="cfg['ai.provider']" /> OpenAI (or compatible)
+      </label>
+      <label class="row gap-xs" style="align-items: center;">
+        <input type="radio" value="ollama" x-model="cfg['ai.provider']" /> Ollama (local)
+      </label>
+    </div>
+    <p class="text-sm muted mt-1">"Auto" picks the first provider that has credentials configured.</p>
+
+    <!-- Anthropic -->
+    <div class="mt-3" x-show="cfg['ai.provider'] === 'anthropic' || cfg['ai.provider'] === 'auto'">
+      <h4>Anthropic</h4>
+      <div class="form-row">
+        <label>API key</label>
+        <div class="row gap-xs" style="flex: 1;">
+          <input type="password" x-model="inputs.anthropic_key"
+                 :placeholder="cfg['ai.anthropic_key'] ? '•••• (saved — leave blank to keep)' : 'sk-ant-...'" />
+          <button class="btn ghost text-sm" type="button"
+                  @click="clearKey('anthropic_key')"
+                  x-show="cfg['ai.anthropic_key']">Clear</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Model</label>
+        <div class="row gap-xs" style="flex: 1;">
+          <select x-model="cfg['ai.anthropic_model']" style="flex: 1;">
+            <option :value="cfg['ai.anthropic_model']" x-text="cfg['ai.anthropic_model'] || '(none)'"></option>
+            <template x-for="m in models.anthropic" :key="m.id">
+              <option :value="m.id" x-text="m.display_name"></option>
+            </template>
+          </select>
+          <button class="btn ghost" type="button" @click="probe('anthropic')"
+                  :disabled="probing.anthropic">
+            <span x-text="probing.anthropic ? 'Loading…' : 'Refresh models'"></span>
+          </button>
+        </div>
+      </div>
+      <p class="text-sm muted" x-show="probeErr.anthropic" x-text="probeErr.anthropic"></p>
+    </div>
+
+    <!-- OpenAI -->
+    <div class="mt-3" x-show="cfg['ai.provider'] === 'openai' || cfg['ai.provider'] === 'auto'">
+      <h4>OpenAI (or OpenAI-compatible)</h4>
+      <div class="form-row">
+        <label>API key</label>
+        <div class="row gap-xs" style="flex: 1;">
+          <input type="password" x-model="inputs.openai_key"
+                 :placeholder="cfg['ai.openai_key'] ? '•••• (saved — leave blank to keep)' : 'sk-...'" />
+          <button class="btn ghost text-sm" type="button"
+                  @click="clearKey('openai_key')"
+                  x-show="cfg['ai.openai_key']">Clear</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Base URL</label>
+        <input type="text" x-model="cfg['ai.openai_base_url']" placeholder="https://api.openai.com/v1" />
+      </div>
+      <div class="form-row">
+        <label>Model</label>
+        <div class="row gap-xs" style="flex: 1;">
+          <select x-model="cfg['ai.openai_model']" style="flex: 1;">
+            <option :value="cfg['ai.openai_model']" x-text="cfg['ai.openai_model'] || '(none)'"></option>
+            <template x-for="m in models.openai" :key="m.id">
+              <option :value="m.id" x-text="m.display_name"></option>
+            </template>
+          </select>
+          <button class="btn ghost" type="button" @click="probe('openai')"
+                  :disabled="probing.openai">
+            <span x-text="probing.openai ? 'Loading…' : 'Refresh models'"></span>
+          </button>
+        </div>
+      </div>
+      <p class="text-sm muted" x-show="probeErr.openai" x-text="probeErr.openai"></p>
+    </div>
+
+    <!-- Ollama -->
+    <div class="mt-3" x-show="cfg['ai.provider'] === 'ollama' || cfg['ai.provider'] === 'auto'">
+      <h4>Ollama</h4>
+      <div class="form-row">
+        <label>Server URL</label>
+        <input type="text" x-model="cfg['ai.ollama_url']" placeholder="http://host.docker.internal:11434" />
+      </div>
+      <div class="form-row">
+        <label>Model</label>
+        <div class="row gap-xs" style="flex: 1;">
+          <select x-model="cfg['ai.ollama_model']" style="flex: 1;">
+            <option :value="cfg['ai.ollama_model']" x-text="cfg['ai.ollama_model'] || '(none)'"></option>
+            <template x-for="m in models.ollama" :key="m.id">
+              <option :value="m.id" x-text="m.display_name"></option>
+            </template>
+          </select>
+          <button class="btn ghost" type="button" @click="probe('ollama')"
+                  :disabled="probing.ollama">
+            <span x-text="probing.ollama ? 'Loading…' : 'Refresh models'"></span>
+          </button>
+        </div>
+      </div>
+      <p class="text-sm muted" x-show="probeErr.ollama" x-text="probeErr.ollama"></p>
+    </div>
+
+    <hr class="mt-3 mb-2" />
+
+    <h4>General</h4>
+    <div class="form-row">
+      <label>Timeout (seconds)</label>
+      <input type="number" min="5" max="600" x-model="cfg['ai.timeout_seconds']" style="max-width: 8rem;" />
+    </div>
+    <div class="form-row">
+      <label>Self-critique (anti-hallucination)</label>
+      <label class="row gap-xs" style="align-items: center;">
+        <input type="checkbox"
+               :checked="cfg['ai.validate_responses'] !== '0'"
+               @change="cfg['ai.validate_responses'] = $event.target.checked ? '1' : '0'" />
+        <span class="text-sm muted">Run a second LLM pass to flag unsupported claims (slower, more accurate).</span>
+      </label>
+    </div>
+    <div class="form-row">
+      <label>Online module docs</label>
+      <label class="row gap-xs" style="align-items: center;">
+        <input type="checkbox"
+               :checked="cfg['ai.web_docs'] === '1'"
+               @change="cfg['ai.web_docs'] = $event.target.checked ? '1' : '0'" />
+        <span class="text-sm muted">When a module isn't installed locally, fetch its parameters from
+          docs.ansible.com (needs internet — off keeps the app fully air-gapped).</span>
+      </label>
+    </div>
+
+    <div class="row gap-md mt-2">
+      <button class="btn primary" type="button" @click="save()" :disabled="saving">
+        <span x-text="saving ? 'Saving…' : 'Save settings'"></span>
+      </button>
+      <span class="text-sm" :class="saveMsgClass" x-text="saveMsg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Credentials at rest</h3>
+    <div class="row gap-md" style="align-items: baseline;">
+      <span class="badge ok" x-show="sys.credentials_encrypted">Encrypted</span>
+      <span class="muted text-sm">Key source:</span>
+      <span class="font-mono text-sm" x-text="sys.master_key_source || '—'"></span>
+    </div>
+    <p class="text-sm muted mt-1">
+      Credentials are stored as Fernet tokens at <code>/data/credentials/&lt;id&gt;.priv</code>.
+      Back up <code>ANSIBLE_GUI_MASTER_KEY</code> (or <code>/data/master.key</code>) — losing it makes every
+      stored credential unrecoverable.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>System</h3>
+    <div class="text-sm muted">
+      <div class="row between"><span>Data directory</span><span class="font-mono text-xs" x-text="sys.data_dir || '—'"></span></div>
+      <div class="row between"><span>Ansible</span><span class="font-mono text-xs" x-text="sys.ansible || '—'"></span></div>
+      <div class="row between"><span>Mode</span><span class="font-mono text-xs">single-user</span></div>
+    </div>
+  </div>
+
+</section>
+<script>
+function settingsPage() {
+  return {
+    ai: {enabled: false, model: ""},
+    sys: {},
+    cfg: {
+      "ai.provider": "auto",
+      "ai.anthropic_key": false, "ai.anthropic_model": "",
+      "ai.openai_key": false, "ai.openai_model": "", "ai.openai_base_url": "",
+      "ai.ollama_url": "", "ai.ollama_model": "",
+      "ai.timeout_seconds": "120", "ai.validate_responses": "1", "ai.web_docs": "0",
+    },
+    inputs: {anthropic_key: "", openai_key: ""},
+    models: {anthropic: [], openai: [], ollama: []},
+    probing: {anthropic: false, openai: false, ollama: false},
+    probeErr: {anthropic: "", openai: "", ollama: ""},
+    saving: false, saveMsg: "", saveMsgClass: "muted",
+
+    async load() {
+      const [a, s, c] = await Promise.all([
+        fetch("/api/ai/status").then(r => r.json()),
+        fetch("/api/dashboard/system").then(r => r.json()),
+        fetch("/api/ai/config").then(r => r.json()),
+      ]);
+      this.ai = a; this.sys = s;
+      Object.assign(this.cfg, c);
+      this.$nextTick(() => lucide.createIcons());
+    },
+
+    clearKey(field) {
+      // Explicit empty string sent to the backend clears the stored secret.
+      this.inputs[field] = "";
+      this.cfg["ai." + field] = false;
+      // Tag so save() sends "" for this field.
+      this._clear = this._clear || {};
+      this._clear[field] = true;
+    },
+
+    async probe(provider) {
+      this.probing[provider] = true;
+      this.probeErr[provider] = "";
+      try {
+        // Only send a key/url if the user typed one; otherwise the backend uses the
+        // saved (decrypted) value — so Refresh works without re-pasting.
+        const body = {provider};
+        if (provider === "anthropic") {
+          if (this.inputs.anthropic_key) body.api_key = this.inputs.anthropic_key;
+          else if (!this.cfg["ai.anthropic_key"]) throw new Error("Enter or save an API key first.");
+        } else if (provider === "openai") {
+          if (this.inputs.openai_key) body.api_key = this.inputs.openai_key;
+          else if (!this.cfg["ai.openai_key"]) throw new Error("Enter or save an API key first.");
+          body.base_url = this.cfg["ai.openai_base_url"] || "https://api.openai.com/v1";
+        } else if (provider === "ollama") {
+          body.url = this.cfg["ai.ollama_url"];
+          if (!body.url) throw new Error("Enter the Ollama URL first.");
+        }
+        const r = await fetch("/api/ai/probe", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({detail: r.statusText}));
+          throw new Error(err.detail || "probe failed");
+        }
+        const data = await r.json();
+        this.models[provider] = data.models || [];
+        if (!this.models[provider].length) {
+          this.probeErr[provider] = "No models returned.";
+        }
+      } catch (e) {
+        this.probeErr[provider] = e.message;
+      } finally {
+        this.probing[provider] = false;
+      }
+    },
+
+    async save() {
+      this.saving = true;
+      this.saveMsg = "";
+      try {
+        const payload = {
+          provider: this.cfg["ai.provider"],
+          anthropic_model: this.cfg["ai.anthropic_model"],
+          openai_model: this.cfg["ai.openai_model"],
+          openai_base_url: this.cfg["ai.openai_base_url"],
+          ollama_url: this.cfg["ai.ollama_url"],
+          ollama_model: this.cfg["ai.ollama_model"],
+          timeout_seconds: String(this.cfg["ai.timeout_seconds"] || "120"),
+          validate_responses: this.cfg["ai.validate_responses"] || "1",
+          web_docs: this.cfg["ai.web_docs"] || "0",
+        };
+        // Keys: only send if user typed something, or explicitly cleared.
+        if (this.inputs.anthropic_key) payload.anthropic_key = this.inputs.anthropic_key;
+        else if (this._clear?.anthropic_key) payload.anthropic_key = "";
+        if (this.inputs.openai_key) payload.openai_key = this.inputs.openai_key;
+        else if (this._clear?.openai_key) payload.openai_key = "";
+
+        const r = await fetch("/api/ai/config", {
+          method: "PUT", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({detail: r.statusText}));
+          throw new Error(err.detail || "save failed");
+        }
+        const c = await r.json();
+        Object.assign(this.cfg, c);
+        this.inputs.anthropic_key = ""; this.inputs.openai_key = "";
+        this._clear = {};
+        // Refresh status badge.
+        this.ai = await fetch("/api/ai/status").then(r => r.json());
+        this.saveMsg = "Saved.";
+        this.saveMsgClass = "ok";
+      } catch (e) {
+        this.saveMsg = e.message;
+        this.saveMsgClass = "err";
+      } finally {
+        this.saving = false;
+        setTimeout(() => { this.saveMsg = ""; }, 4000);
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

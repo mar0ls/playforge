@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}Assistant — Playforge{% endblock %}
+{% block breadcrumb %}<span>Assistant</span>{% endblock %}
+{% block content %}
+<style>
+  .chat { display: flex; flex-direction: column; gap: 0.75rem; }
+  .chat-log { max-height: 64vh; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; padding-right: 0.25rem; }
+  .msg { max-width: 80%; padding: 0.6rem 0.8rem; border-radius: 10px; }
+  .msg .msg-role { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; margin-bottom: 0.25rem; }
+  .msg.user { align-self: flex-end; background: rgba(47,129,247,0.12); border: 1px solid rgba(47,129,247,0.3); }
+  .msg.assistant { align-self: flex-start; background: var(--bg-elev-2, #161b22); border: 1px solid var(--border, #30363d); }
+  .msg-text { white-space: pre-wrap; line-height: 1.45; }
+  .chat-input { display: flex; gap: 0.5rem; align-items: flex-end; }
+  .chat-input textarea { flex: 1; resize: vertical; }
+</style>
+
+<section x-data="assistant()" x-init="init()">
+  <div class="card">
+    <div class="card-header">
+      <h3>✨ Assistant</h3>
+      <span class="text-xs muted" x-show="model">via <span x-text="provider"></span> · <span class="font-mono" x-text="model"></span></span>
+    </div>
+
+    <template x-if="aiEnabled === false">
+      <div class="empty-state">
+        <i class="icon" data-lucide="sparkles"></i>
+        <p>AI is not configured yet.</p>
+        <a href="/settings" class="btn">Configure in Settings</a>
+      </div>
+    </template>
+
+    <template x-if="aiEnabled === true">
+      <div class="chat">
+        <div class="chat-log" x-ref="log">
+          <template x-if="messages.length === 0">
+            <div class="empty-state">
+              <i class="icon" data-lucide="sparkles"></i>
+              <h2 style="margin:0.5rem 0;">Tell me what you want to do</h2>
+              <p class="muted">Generate a playbook, fix an error, or ask anything about Ansible.</p>
+              <div class="row wrap gap-sm mt-2" style="justify-content:center;">
+                <template x-for="ex in examples" :key="ex">
+                  <button class="btn-secondary btn-sm" @click="input = ex; send()" x-text="ex"></button>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <template x-for="(m, i) in messages" :key="i">
+            <div :class="`msg ${m.role}`">
+              <div class="msg-role" x-text="m.role === 'user' ? 'You' : 'Assistant'"></div>
+              <template x-for="(seg, j) in segments(m.content)" :key="j">
+                <div>
+                  <template x-if="seg.type === 'code'">
+                    <div>
+                      <pre class="log" style="margin:0.4rem 0;" x-text="seg.text"></pre>
+                      <div class="row gap-sm" style="margin:-0.2rem 0 0.4rem;">
+                        <button class="btn-ghost btn-sm" @click="copy(seg.text)"><i class="icon" data-lucide="copy"></i> Copy</button>
+                        <button class="btn-ghost btn-sm" @click="openSave(seg.text)"><i class="icon" data-lucide="save"></i> Save to project…</button>
+                      </div>
+                    </div>
+                  </template>
+                  <div x-show="seg.type === 'text'" class="msg-text md-body" x-html="renderMarkdown(seg.text)"></div>
+                </div>
+              </template>
+
+              <template x-if="m.files && m.files.length">
+                <div class="mt-1" style="border-top:1px solid var(--border,#30363d); padding-top:0.4rem;">
+                  <div class="row between" style="align-items:center;">
+                    <strong class="text-sm">📁 Files (<span x-text="m.files.length"></span>)</strong>
+                    <button class="btn-sm" @click="saveAllFiles(m.files)" :disabled="!projects.length">
+                      <i class="icon" data-lucide="save"></i> Save all to project
+                    </button>
+                  </div>
+                  <template x-for="(f, fi) in m.files" :key="fi">
+                    <div class="card" style="background: var(--bg-elev-2,#161b22); margin:0.4rem 0; padding:0.5rem;">
+                      <div class="row between" style="align-items:center;">
+                        <code class="text-sm" x-text="f.path"></code>
+                        <div class="row gap-sm">
+                          <button class="btn-ghost btn-sm" @click="copy(f.content)">Copy</button>
+                          <button class="btn-ghost btn-sm" @click="openSave(f.content, f.path)">Save…</button>
+                        </div>
+                      </div>
+                      <pre class="log" style="margin:0.3rem 0 0; max-height:14rem;" x-text="f.content"></pre>
+                    </div>
+                  </template>
+                  <span class="text-xs" :class="saveMsgClass" x-text="saveMsg"></span>
+                </div>
+              </template>
+
+              <template x-if="m.invalid_modules && m.invalid_modules.length">
+                <div class="text-xs mt-1" style="color: var(--fail);">
+                  ⚠️ Self-check: these modules don't exist — <code x-text="m.invalid_modules.join(', ')"></code>
+                </div>
+              </template>
+              <template x-if="m.uninstalled_modules && m.uninstalled_modules.length">
+                <div class="text-xs mt-1" style="color: var(--accent, #58a6ff);">
+                  ℹ️ Real modules, but their collection isn't installed here — <code x-text="m.uninstalled_modules.join(', ')"></code>.
+                  Add it via the project's <strong>Dependencies (Galaxy)</strong> card or <code>requirements.yml</code>.
+                </div>
+              </template>
+              <template x-if="m.playbook_issues && m.playbook_issues.length">
+                <div class="text-xs mt-1" style="border-top:1px solid var(--border,#30363d); padding-top:0.4rem;">
+                  <div style="font-weight:600;">🛡️ Rule check (the AI's playbook was verified):</div>
+                  <ul style="padding-left:1.25rem; margin:0.25rem 0;">
+                    <template x-for="iss in m.playbook_issues" :key="iss.message">
+                      <li :style="iss.severity === 'error' ? 'color:var(--fail)' : 'color:var(--warn)'">
+                        <strong x-text="iss.severity === 'error' ? 'error: ' : 'warn: '"></strong><span x-text="iss.message"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <div class="msg assistant" x-show="busy">
+            <div class="msg-role">Assistant</div>
+            <div class="muted">thinking…</div>
+          </div>
+        </div>
+
+        <div class="card" x-show="saveDialog" x-cloak style="border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.05);">
+          <h4>Save snippet to a project</h4>
+          <template x-if="projects.length === 0">
+            <p class="text-sm muted">No projects yet — create one first, then come back.</p>
+          </template>
+          <div class="form-row" x-show="projects.length">
+            <label>Project
+              <select x-model="saveDialog.project">
+                <template x-for="p in projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+              </select>
+            </label>
+            <label>Path
+              <input type="text" x-model="saveDialog.path" placeholder="playbooks/from-assistant.yml">
+            </label>
+          </div>
+          <div class="row gap-sm mt-1">
+            <button @click="saveSnippet()" :disabled="saving || !saveDialog.project || !saveDialog.path"
+                    x-show="projects.length">
+              <span x-text="saving ? 'Saving…' : 'Save'"></span>
+            </button>
+            <button class="btn-secondary" @click="saveDialog = null">Cancel</button>
+            <span class="text-sm" :class="saveMsgClass" x-text="saveMsg"></span>
+          </div>
+        </div>
+
+        <form class="chat-input" @submit.prevent="send()">
+          <textarea x-model="input" rows="2"
+                    placeholder="Describe what you want to do…  (Enter to send, Shift+Enter for a new line)"
+                    @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); send(); }"></textarea>
+          <button type="submit" :disabled="busy || !input.trim()">
+            <i class="icon" data-lucide="send"></i>
+          </button>
+        </form>
+        <div class="row gap-sm">
+          <button class="btn-ghost btn-sm" @click="messages = []" x-show="messages.length">Clear chat</button>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
+
+<script>
+function assistant() {
+  return {
+    aiEnabled: null, provider: "", model: "", messages: [], input: "", busy: false,
+    projects: [], saveDialog: null, saving: false, saveMsg: "", saveMsgClass: "muted",
+    examples: [
+      "Write a playbook to install and start nginx on Debian hosts",
+      "How do I loop over a list of users with the user module?",
+      "Why might a task report 'unreachable' and how do I fix it?",
+    ],
+    async init() {
+      const s = await fetch("/api/ai/status").then(r => r.ok ? r.json() : {enabled: false});
+      this.aiEnabled = !!s.enabled; this.provider = s.provider || ""; this.model = s.model || "";
+      this.projects = await fetch("/api/projects").then(r => r.ok ? r.json() : []).catch(() => []);
+      this.$nextTick(() => lucide.createIcons());
+    },
+    segments(content) {
+      // Split on ``` fences: odd segments are code blocks.
+      const out = []; const parts = (content || "").split("```");
+      parts.forEach((p, idx) => {
+        if (idx % 2 === 1) out.push({type: "code", text: p.replace(/^[a-zA-Z0-9_-]*\n/, "")});
+        else if (p.trim()) out.push({type: "text", text: p.trim()});
+      });
+      return out.length ? out : [{type: "text", text: content || ""}];
+    },
+    async send() {
+      const text = this.input.trim();
+      if (!text || this.busy) return;
+      this.messages.push({role: "user", content: text});
+      this.input = ""; this.busy = true; this.scroll();
+      try {
+        const r = await fetch("/api/ai/chat", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({messages: this.messages.map(m => ({role: m.role, content: m.content}))}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this.messages.push({role: "assistant", content: "⚠️ " + (d.detail || "request failed")});
+          return;
+        }
+        this.messages.push({
+          role: "assistant", content: d.reply || "(empty response)",
+          invalid_modules: (d.validation && d.validation.invalid_modules) || [],
+          uninstalled_modules: (d.validation && d.validation.uninstalled_modules) || [],
+          playbook_issues: (d.validation && d.validation.playbook_issues) || [],
+          files: d.files || [],
+        });
+        this.provider = d.provider || this.provider; this.model = d.model || this.model;
+      } finally {
+        this.busy = false;
+        this.$nextTick(() => { lucide.createIcons(); this.scroll(); });
+      }
+    },
+    scroll() {
+      this.$nextTick(() => { const l = this.$refs.log; if (l) l.scrollTop = l.scrollHeight; });
+    },
+    copy(text) {
+      // navigator.clipboard needs a secure context; fall back to execCommand on plain http.
+      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text); return; }
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+      document.body.removeChild(ta);
+    },
+    openSave(content, suggestedPath) {
+      this.saveMsg = "";
+      this.saveDialog = {
+        content, project: (this.projects[0] && this.projects[0].id) || "",
+        path: suggestedPath || "playbooks/from-assistant.yml",
+      };
+    },
+    async saveSnippet() {
+      if (!this.saveDialog || this.saving) return;
+      this.saving = true; this.saveMsg = "";
+      try {
+        const r = await fetch(`/api/projects/${this.saveDialog.project}/file`, {
+          method: "PUT", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: this.saveDialog.path, content: this.saveDialog.content,
+                                message: "Add snippet from assistant"}),
+        });
+        if (!r.ok) { this.saveMsg = (await r.text()) || "save failed"; this.saveMsgClass = "err"; return; }
+        this.saveMsg = "Saved ✓"; this.saveMsgClass = "ok";
+        setTimeout(() => { this.saveDialog = null; }, 1200);
+      } finally { this.saving = false; }
+    },
+    async saveAllFiles(files) {
+      if (!files || !files.length) return;
+      const project = (this.projects[0] && this.projects[0].id) || "";
+      if (!project) { this.saveMsg = "No project to save into."; this.saveMsgClass = "err"; return; }
+      this.saveMsg = "Saving…"; this.saveMsgClass = "muted";
+      let ok = 0;
+      for (const f of files) {
+        try {
+          const r = await fetch(`/api/projects/${project}/file`, {
+            method: "PUT", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({path: f.path, content: f.content, message: `Add ${f.path} from assistant`}),
+          });
+          if (r.ok) ok++;
+        } catch (e) { /* keep going */ }
+      }
+      this.saveMsg = `Saved ${ok}/${files.length} file(s) to ${this.projects[0].name} ✓`;
+      this.saveMsgClass = ok === files.length ? "ok" : "err";
+    },
+  };
+}
+</script>
+{% endblock %}

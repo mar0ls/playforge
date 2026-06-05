@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Schedules — Playforge{% endblock %}
+{% block breadcrumb %}<span>Schedules</span>{% endblock %}
+{% block header_actions %}
+  <button class="btn" @click="$dispatch('open-sched-form')">
+    <i class="icon" data-lucide="plus"></i> New schedule
+  </button>
+{% endblock %}
+{% block content %}
+<section x-data="schedulesPage()" x-init="load()" @open-sched-form.window="resetForm(); showForm = true">
+
+  <div class="card" x-show="showForm" x-cloak>
+    <div class="card-header">
+      <h3 x-text="editingId ? 'Edit schedule' : 'New schedule'"></h3>
+      <button class="btn-ghost" @click="showForm = false"><i class="icon" data-lucide="x"></i></button>
+    </div>
+    <form @submit.prevent="save()">
+      <div class="form-row">
+        <label>Name
+          <input type="text" x-model="form.name" required placeholder="Nightly deploy">
+        </label>
+        <label>Cron (5-field, UTC)
+          <input type="text" x-model="form.cron_expr" required placeholder="0 3 * * *">
+        </label>
+      </div>
+      <p class="muted text-xs" style="margin-top:-0.5rem;">
+        Examples: <code>0 3 * * *</code> (daily 03:00 UTC),
+        <code>*/15 * * * *</code> (every 15 min),
+        <code>0 9 * * 1-5</code> (weekdays 09:00).
+      </p>
+      <label>Project
+        <select x-model="form.project_id" required @change="onProjectChange()">
+          <option value="">— pick a project —</option>
+          <template x-for="p in projects" :key="p.id">
+            <option :value="p.id" x-text="p.name"></option>
+          </template>
+        </select>
+      </label>
+      <label>Template (defines what gets run)
+        <select x-model.number="form.template_id" required>
+          <option :value="0">— pick a template —</option>
+          <template x-for="t in templatesForProject" :key="t.id">
+            <option :value="t.id" x-text="t.name + ' (' + t.playbook + ')'"></option>
+          </template>
+        </select>
+        <template x-if="form.project_id && !templatesForProject.length">
+          <div class="text-xs muted mt-1">No saved templates in this project. Go to project → Run tab → "Save as template".</div>
+        </template>
+      </label>
+      <div class="checkbox-row">
+        <input type="checkbox" id="s-enabled" x-model="form.enabled">
+        <label for="s-enabled" style="margin:0; display:inline;">enabled</label>
+      </div>
+      <div class="row gap-sm mt-1">
+        <button type="submit" :disabled="saving">
+          <i class="icon" data-lucide="save"></i>
+          <span x-text="saving ? 'Saving…' : (editingId ? 'Update' : 'Create')"></span>
+        </button>
+        <button type="button" class="btn-secondary" @click="showForm = false">Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  <template x-if="!schedules.length && !showForm">
+    <div class="empty-state">
+      <i class="icon" data-lucide="calendar-clock"></i>
+      <p>No schedules yet. Templates → schedules let you run playbooks unattended on a cron.</p>
+    </div>
+  </template>
+
+  <template x-for="s in schedules" :key="s.id">
+    <div class="card">
+      <div class="row between">
+        <div>
+          <div class="row gap-sm" style="align-items: baseline;">
+            <span :class="`badge ${s.enabled ? 'ok' : 'muted'}`" x-text="s.enabled ? 'enabled' : 'disabled'"></span>
+            <strong x-text="s.name"></strong>
+            <code class="font-mono text-xs" x-text="s.cron_expr"></code>
+          </div>
+          <div class="text-sm muted" x-text="`project=${s.project_id} template=${s.template_id}`"></div>
+          <div class="text-xs muted">
+            <span x-show="s.next_fire_at">next fire: <span x-text="formatTime(s.next_fire_at)"></span></span>
+            <span x-show="s.last_run_at"> · last run: <span x-text="formatTime(s.last_run_at)"></span>
+              <a x-show="s.last_run_id" :href="`/projects/${s.project_id}/runs/${s.last_run_id}`">#<span x-text="s.last_run_id"></span></a>
+            </span>
+          </div>
+        </div>
+        <div class="row gap-sm">
+          <button class="btn-secondary btn-sm" @click="edit(s)"><i class="icon" data-lucide="pencil"></i></button>
+          <button class="btn-secondary btn-sm danger" @click="remove(s.id)"><i class="icon" data-lucide="trash-2"></i></button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+</section>
+<script>
+function schedulesPage() {
+  return {
+    schedules: [], projects: [], allTemplates: {}, showForm: false, saving: false, editingId: null,
+    form: { name: "", cron_expr: "0 3 * * *", project_id: "", template_id: 0, enabled: true },
+
+    get templatesForProject() {
+      return this.allTemplates[this.form.project_id] || [];
+    },
+
+    resetForm() {
+      this.editingId = null;
+      this.form = { name: "", cron_expr: "0 3 * * *", project_id: "", template_id: 0, enabled: true };
+    },
+    formatTime(iso) { return iso ? new Date(iso).toLocaleString() : ""; },
+
+    async load() {
+      const [s, p] = await Promise.all([
+        fetch("/api/schedules").then(r => r.json()),
+        fetch("/api/projects").then(r => r.json()),
+      ]);
+      this.schedules = s;
+      this.projects = p;
+      // Pre-fetch templates for each project so the dropdown is instant when picking.
+      await Promise.all(p.map(async proj => {
+        const r = await fetch(`/api/projects/${proj.id}/templates`);
+        if (r.ok) this.allTemplates[proj.id] = await r.json();
+      }));
+      this.$nextTick(() => lucide.createIcons());
+    },
+    async onProjectChange() {
+      const pid = this.form.project_id;
+      if (!pid) return;
+      if (!this.allTemplates[pid]) {
+        const r = await fetch(`/api/projects/${pid}/templates`);
+        if (r.ok) this.allTemplates[pid] = await r.json();
+      }
+      this.form.template_id = 0;
+    },
+
+    edit(s) {
+      this.editingId = s.id;
+      this.form = { name: s.name, cron_expr: s.cron_expr, project_id: s.project_id,
+                     template_id: s.template_id, enabled: s.enabled };
+      this.onProjectChange();
+      this.showForm = true;
+    },
+    async save() {
+      this.saving = true;
+      try {
+        const url = this.editingId ? `/api/schedules/${this.editingId}` : "/api/schedules";
+        const method = this.editingId ? "PUT" : "POST";
+        const r = await fetch(url, {
+          method, headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(this.form),
+        });
+        if (!r.ok) { alert(await r.text()); return; }
+        this.showForm = false;
+        this.resetForm();
+        await this.load();
+      } finally { this.saving = false; }
+    },
+    async remove(id) {
+      if (!confirm("Delete this schedule?")) return;
+      await fetch(`/api/schedules/${id}`, {method: "DELETE"});
+      await this.load();
+    },
+  };
+}
+</script>
+{% endblock %}

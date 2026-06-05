@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ section }} — Playforge{% endblock %}
+{% block breadcrumb %}<span>{{ section }}</span>{% endblock %}
+{% block content %}
+<div class="empty-state">
+  <i class="icon" data-lucide="{{ icon }}" style="width:48px; height:48px;"></i>
+  <h2 style="margin-top:0.75rem;">{{ section }}</h2>
+  <p>{{ blurb }}</p>
+  <p class="text-xs muted">Planned for {{ phase }}.</p>
+</div>
+{% endblock %}

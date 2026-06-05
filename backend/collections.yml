@@ -1,0 +1,16 @@
+# Ansible collections baked into the image so they're always available offline.
+#
+# Why: a bare ansible-core image only knows ~70 builtin modules — it doesn't know
+# yum/ufw (which live in collections), community.general.*, ansible.posix.* etc.
+# Installing these here means `ansible-doc` (and therefore the assistant's RAG /
+# BM25 index + the anti-hallucination check) sees the modules people actually use,
+# without any network access at run time.
+#
+# Adds ~620 modules (71 -> ~690) and ~36 MB. Pin or extend as needed; rebuild the
+# image (`docker compose build`) to apply.
+collections:
+  - name: community.general
+  - name: ansible.posix
+  - name: community.crypto
+  - name: ansible.windows
+  - name: community.docker

@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run_id }} — Playforge{% endblock %}
+{% block breadcrumb %}
+  <a href="/projects" class="muted">Projects</a>
+  <span class="sep">/</span>
+  <a :href="`/projects/${projectId}`" class="muted" x-text="projectId">{{ project_id }}</a>
+  <span class="sep">/</span>
+  <span>Run #{{ run_id }}</span>
+{% endblock %}
+{% block content %}
+<section x-data="runDetail('{{ project_id }}', {{ run_id }})" x-init="load()">
+
+  <template x-if="!loaded">
+    <div class="muted">Loading…</div>
+  </template>
+
+  <template x-if="loaded && !run">
+    <div class="empty-state">
+      <i class="icon" data-lucide="alert-triangle"></i>
+      <p>Run #{{ run_id }} not found.</p>
+      <a :href="`/projects/${projectId}`" class="btn">Back to project</a>
+    </div>
+  </template>
+
+  <template x-if="run">
+    <div>
+      <div class="card">
+        <div class="row between">
+          <div>
+            <div class="row gap-sm">
+              <span :class="`badge ${badgeClass(run.status)}`" x-text="run.status.toUpperCase()"></span>
+              <strong class="font-mono" x-text="run.playbook"></strong>
+            </div>
+            <div class="text-sm muted mt-1">
+              Inventory: <code x-text="run.inventory || '(default)'"></code>
+              <span x-show="run.tags">&nbsp;·&nbsp; Tags: <code x-text="run.tags"></code></span>
+            </div>
+            <div class="text-xs muted">
+              Started: <span x-text="formatTime(run.started_at)"></span>
+              &nbsp;·&nbsp; Duration: <span x-text="duration()"></span>
+            </div>
+          </div>
+          <div class="row gap-sm">
+            <a :href="`/projects/${projectId}`" class="btn-secondary"><i class="icon" data-lucide="arrow-left"></i> Back to project</a>
+            <button @click="rerun()"><i class="icon" data-lucide="rotate-ccw"></i> Re-run with same params</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" x-show="Object.keys(run.stats).length">
+        <h3>Per-host stats</h3>
+        <table>
+          <thead><tr><th>Host</th><th>ok</th><th>changed</th><th>failures</th><th>unreachable</th><th>skipped</th></tr></thead>
+          <tbody>
+            <template x-for="(s, host) in run.stats" :key="host">
+              <tr>
+                <td x-text="host"></td>
+                <td x-text="s.ok || 0"></td>
+                <td x-text="s.changed || 0"></td>
+                <td x-text="s.failures || 0"></td>
+                <td x-text="s.unreachable || 0"></td>
+                <td x-text="s.skipped || 0"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" x-show="(run.artifacts || []).length">
+        <h3>Artifacts (<span x-text="(run.artifacts || []).length"></span>)</h3>
+        <p class="text-sm muted">Files this run wrote into the project (generated keys, rendered configs, fetched files). They've been committed to the project repo.</p>
+        <ul class="tree">
+          <template x-for="a in (run.artifacts || [])" :key="a">
+            <li>
+              <a :href="`/projects/${projectId}?file=${encodeURIComponent(a)}#files`" class="font-mono text-sm" x-text="a"></a>
+            </li>
+          </template>
+        </ul>
+      </div>
+
+      <div class="card" x-show="run.failures.length">
+        <div class="row between">
+          <h3>Failures (<span x-text="run.failures.length"></span>)</h3>
+          <button class="btn-secondary btn-sm" @click="rerunFailed()" :disabled="rerunning"
+                  x-show="failedHosts().length">
+            <i class="icon" data-lucide="rotate-ccw"></i>
+            <span x-text="rerunning ? 'Starting…' : `Re-run ${failedHosts().length} failed host(s)`"></span>
+          </button>
+        </div>
+        <template x-for="(f, i) in run.failures" :key="i">
+          <div class="card" style="background:#1a0f12; border-color:#3d1d1d;">
+            <div class="row between">
+              <strong x-text="`${f.host || '?'} — ${f.task || ''}`"></strong>
+              <div class="row gap-sm" x-show="aiEnabled">
+                <button class="btn-secondary btn-sm" @click="explainFailure(i, f)" :disabled="aiBusy[i]">
+                  <i class="icon" data-lucide="sparkles"></i>
+                  <span x-text="aiBusy[i] ? 'Asking…' : 'Explain'"></span>
+                </button>
+                <button class="btn-secondary btn-sm" @click="suggestFix(i, f)" :disabled="aiFixBusy[i]">
+                  <i class="icon" data-lucide="wrench"></i>
+                  <span x-text="aiFixBusy[i] ? 'Thinking…' : 'Suggest fix'"></span>
+                </button>
+              </div>
+            </div>
+            <pre class="log" x-text="(f.result && f.result.msg) || JSON.stringify(f.result, null, 2)"></pre>
+
+            <template x-if="aiFix[i]">
+              <div class="card mt-1" style="background: rgba(63,185,80,0.06); border-color: rgba(63,185,80,0.25);">
+                <div class="row gap-sm" style="align-items: baseline;">
+                  <i class="icon" data-lucide="wrench"></i>
+                  <strong>AI suggested fix</strong>
+                  <span class="muted text-xs" x-text="aiFix[i].model"></span>
+                </div>
+                <p class="text-sm" x-show="aiFix[i].root_cause"><strong>Cause:</strong> <span x-text="aiFix[i].root_cause"></span></p>
+                <p class="text-sm" x-show="aiFix[i].fix_summary" x-text="aiFix[i].fix_summary"></p>
+                <template x-if="aiFix[i].manual_steps && aiFix[i].manual_steps.length">
+                  <div class="text-sm">
+                    <strong>Manual steps:</strong>
+                    <ul style="padding-left: 1.25rem; margin: 0.25rem 0;">
+                      <template x-for="s in aiFix[i].manual_steps" :key="s"><li x-text="s"></li></template>
+                    </ul>
+                  </div>
+                </template>
+                <template x-if="aiFix[i].new_content">
+                  <div class="mt-1">
+                    <div class="text-xs muted">Proposed content for <code x-text="aiFix[i].target_path"></code>:</div>
+                    <pre class="log" style="max-height: 14rem;" x-text="aiFix[i].new_content"></pre>
+                    <template x-if="aiFix[i].validation && (aiFix[i].validation.unknown_modules || []).length">
+                      <div class="text-xs" style="color: var(--warn);">⚠️ Self-check: modules not found —
+                        <code x-text="aiFix[i].validation.unknown_modules.join(', ')"></code></div>
+                    </template>
+                    <div class="row gap-sm mt-1">
+                      <button class="btn-sm" @click="applyFix(i)" :disabled="fixApplying[i] || fixApplied[i]">
+                        <i class="icon" data-lucide="check"></i>
+                        <span x-text="fixApplied[i] ? 'Applied ✓' : (fixApplying[i] ? 'Applying…' : `Apply to ${aiFix[i].target_path}`)"></span>
+                      </button>
+                      <span class="text-xs muted" x-show="fixApplied[i]">Saved + committed. Use “Re-run failed host(s)” above to retry.</span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="aiExplain[i]">
+              <div class="card mt-1" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
+                <div class="row gap-sm" style="align-items: baseline;">
+                  <i class="icon" data-lucide="sparkles"></i>
+                  <strong>AI explanation</strong>
+                  <span class="muted text-xs" x-text="aiExplain[i].model"></span>
+                  <template x-if="aiExplain[i].validation">
+                    <span :class="`badge ${confidenceBadge(aiExplain[i].validation.confidence)}`"
+                          x-text="`${aiExplain[i].validation.confidence || ''} confidence`"></span>
+                  </template>
+                </div>
+                <p class="text-sm" style="white-space: pre-wrap;" x-text="aiExplain[i].explanation"></p>
+                <template x-if="aiExplain[i].validation && (aiExplain[i].validation.unknown_modules || []).length">
+                  <div class="text-xs mt-1" style="color: var(--warn);">
+                    ⚠️ Modules referenced but not installed in this container:
+                    <code x-text="aiExplain[i].validation.unknown_modules.join(', ')"></code>
+                  </div>
+                </template>
+                <template x-if="aiExplain[i].validation && aiExplain[i].validation.self_critique && (aiExplain[i].validation.self_critique.unsupported_claims || []).length">
+                  <div class="text-xs mt-1">
+                    <div style="color: var(--warn);">⚠️ Claims a second AI pass couldn't ground in the failure record:</div>
+                    <ul style="padding-left: 1.25rem; margin: 0.25rem 0;">
+                      <template x-for="c in aiExplain[i].validation.self_critique.unsupported_claims" :key="c">
+                        <li class="muted" x-text="c"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div class="card" x-show="!run.failures.length && Object.keys(run.stats).length === 0">
+        <div class="muted">No host-level statistics were recorded for this run (it ended before reaching any tasks).</div>
+      </div>
+    </div>
+  </template>
+
+</section>
+
+<script>
+function runDetail(projectId, runId) {
+  return {
+    projectId, runId, run: null, loaded: false,
+    aiEnabled: false, aiExplain: {}, aiBusy: {},
+    aiFix: {}, aiFixBusy: {}, fixApplying: {}, fixApplied: {}, rerunning: false,
+
+    async load() {
+      const [r, aiR] = await Promise.all([
+        fetch(`/api/projects/${projectId}/runs/${runId}`),
+        fetch(`/api/ai/status`).then(rr => rr.ok ? rr.json() : {enabled: false}),
+      ]);
+      if (r.ok) this.run = await r.json();
+      this.aiEnabled = !!aiR.enabled;
+      this.loaded = true;
+      this.$nextTick(() => lucide.createIcons());
+    },
+
+    async explainFailure(idx, failure) {
+      if (this.aiBusy[idx]) return;
+      this.aiBusy = { ...this.aiBusy, [idx]: true };
+      try {
+        const resp = await fetch("/api/ai/explain-failure", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({failure, playbook: this.run.playbook}),
+        });
+        if (!resp.ok) { alert(await resp.text()); return; }
+        const data = await resp.json();
+        this.aiExplain = { ...this.aiExplain, [idx]: data };
+      } finally {
+        this.aiBusy = { ...this.aiBusy, [idx]: false };
+        this.$nextTick(() => lucide.createIcons());
+      }
+    },
+    failedHosts() {
+      if (!this.run) return [];
+      return [...new Set((this.run.failures || []).map(f => f.host).filter(Boolean))];
+    },
+    async rerunFailed() {
+      const hosts = this.failedHosts();
+      if (!hosts.length) { alert("No named failed hosts to re-run."); return; }
+      if (!confirm(`Re-run ${this.run.playbook} limited to: ${hosts.join(", ")}?`)) return;
+      this.rerunning = true;
+      try {
+        const r = await fetch("/api/runs", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            project_id: this.projectId, playbook: this.run.playbook,
+            inventory: this.run.inventory || "",
+            tags: this.run.tags ? this.run.tags.split(",").filter(Boolean) : [],
+            limit: hosts.join(":"),
+          }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.detail || "re-run failed"); return; }
+        window.location.href = `/projects/${this.projectId}/runs/${d.run_id}`;
+      } finally { this.rerunning = false; }
+    },
+    async suggestFix(idx, failure) {
+      if (this.aiFixBusy[idx]) return;
+      this.aiFixBusy = { ...this.aiFixBusy, [idx]: true };
+      try {
+        const r = await fetch("/api/ai/suggest-fix", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({project_id: this.projectId, failure, playbook: this.run.playbook}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.detail || "suggest-fix failed"); return; }
+        this.aiFix = { ...this.aiFix, [idx]: d };
+      } finally {
+        this.aiFixBusy = { ...this.aiFixBusy, [idx]: false };
+        this.$nextTick(() => lucide.createIcons());
+      }
+    },
+    async applyFix(idx) {
+      const fix = this.aiFix[idx];
+      if (!fix || !fix.new_content) return;
+      if (!confirm(`Overwrite ${fix.target_path} with the AI-proposed content?`)) return;
+      this.fixApplying = { ...this.fixApplying, [idx]: true };
+      try {
+        const r = await fetch(`/api/projects/${this.projectId}/file`, {
+          method: "PUT", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            path: fix.target_path, content: fix.new_content,
+            message: ("AI fix: " + (fix.fix_summary || fix.target_path)).slice(0, 200),
+          }),
+        });
+        if (!r.ok) { alert(await r.text()); return; }
+        this.fixApplied = { ...this.fixApplied, [idx]: true };
+      } finally { this.fixApplying = { ...this.fixApplying, [idx]: false }; }
+    },
+    badgeClass(s) {
+      if (s === "ok" || s === "successful") return "ok";
+      if (s === "canceled") return "warn";
+      if (s === "failed") return "fail";
+      if (s === "running") return "run";
+      return "muted";
+    },
+    confidenceBadge(c) {
+      if (c === "high") return "ok";
+      if (c === "low") return "fail";
+      return "warn";
+    },
+    formatTime(iso) { return iso ? new Date(iso).toLocaleString() : ""; },
+    duration() {
+      if (!this.run || !this.run.started_at) return "—";
+      const end = this.run.ended_at ? new Date(this.run.ended_at) : new Date();
+      const s = Math.round((end - new Date(this.run.started_at)) / 1000);
+      return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+    },
+    rerun() {
+      // Hop back to the project's Run tab pre-filled. We pass the params via query string
+      // so the run page can hydrate the form. Keeps this page read-only.
+      const q = new URLSearchParams({
+        rerun: "1", playbook: this.run.playbook,
+        inventory: this.run.inventory || "", tags: this.run.tags || "",
+      });
+      window.location.href = `/projects/${this.projectId}?${q.toString()}#run`;
+    },
+  };
+}
+</script>
+{% endblock %}

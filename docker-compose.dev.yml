@@ -1,0 +1,7 @@
+# Development override: hot-reload the app code from the host.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  app:
+    volumes:
+      - ./backend/app:/app/app
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765", "--reload", "--reload-dir", "/app/app"]

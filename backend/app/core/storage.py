@@ -1,0 +1,362 @@
+"""Project storage: per-project directory on disk, each one a git repo.
+
+A project lives at `<data_dir>/projects/<project_id>/`. The first commit is made
+automatically when the project is created or imported. Every subsequent write
+through `write_file` makes a new commit so the user has full history and diff
+without us building our own versioning.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+from urllib.parse import urlparse, urlunparse
+import shutil
+import uuid
+
+from git import Repo, Actor, GitCommandError
+
+from app.core.config import settings
+
+
+GIT_AUTHOR = Actor("Playforge", "playforge@localhost")
+
+
+class StorageError(Exception):
+    """Raised when a storage operation violates project sandboxing or git state."""
+
+
+@dataclass(frozen=True)
+class ProjectPaths:
+    project_id: str
+    root: Path
+
+    @property
+    def inventories_dir(self) -> Path:
+        return self.root / "inventories"
+
+    @property
+    def roles_dir(self) -> Path:
+        return self.root / "roles"
+
+    @property
+    def group_vars_dir(self) -> Path:
+        return self.root / "group_vars"
+
+    @property
+    def host_vars_dir(self) -> Path:
+        return self.root / "host_vars"
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _project_root(project_id: str) -> Path:
+    safe = "".join(c for c in project_id if c.isalnum() or c in "-_")
+    if not safe or safe != project_id:
+        raise StorageError(f"invalid project id: {project_id!r}")
+    return settings.projects_dir / safe
+
+
+def paths_for(project_id: str) -> ProjectPaths:
+    root = _project_root(project_id)
+    if not root.exists():
+        raise StorageError(f"project not found: {project_id}")
+    return ProjectPaths(project_id=project_id, root=root)
+
+
+def list_projects() -> list[str]:
+    return sorted(p.name for p in settings.projects_dir.iterdir() if p.is_dir())
+
+
+def create_project(name: str) -> ProjectPaths:
+    """Create an empty project with the recommended Ansible directory layout.
+
+    Reference: https://docs.ansible.com/ansible/latest/tips_tricks/sample_setup.html
+    """
+    project_id = _new_id()
+    root = _project_root(project_id)
+    if root.exists():
+        raise StorageError(f"project {project_id} already exists")
+
+    root.mkdir(parents=True)
+    for sub in ("inventories/production", "inventories/staging",
+                "group_vars", "host_vars", "roles", "playbooks"):
+        (root / sub).mkdir(parents=True, exist_ok=True)
+
+    (root / "ansible.cfg").write_text(
+        "[defaults]\n"
+        "host_key_checking = False\n"
+        "inventory = inventories/production\n"
+        "roles_path = roles\n"
+        "stdout_callback = yaml\n"
+    )
+    (root / "playbooks" / "site.yml").write_text(
+        "---\n"
+        f"# {name} — main playbook\n"
+        "- name: Example play\n"
+        "  hosts: all\n"
+        "  gather_facts: false\n"
+        "  tasks:\n"
+        "    - name: Ping all hosts\n"
+        "      ansible.builtin.ping:\n"
+    )
+    (root / "inventories" / "production" / "hosts").write_text(
+        "# Inventory file — define your hosts here.\n"
+        "# Example:\n"
+        "# [web]\n"
+        "# web1.example.com\n"
+    )
+    (root / ".gitignore").write_text(
+        "*.retry\n"
+        ".vault_pass\n"
+        "__pycache__/\n"
+    )
+
+    repo = Repo.init(root)
+    # Exclude `.git/` internals: rglob runs after init, so without this filter the
+    # repo's own metadata gets staged — which later makes `git merge`/`pull` abort
+    # ("BUG: .git/ in index").
+    repo.index.add([str(p.relative_to(root)) for p in root.rglob("*")
+                    if p.is_file() and ".git" not in p.parts])
+    repo.index.commit(f"Initial project layout for {name}", author=GIT_AUTHOR, committer=GIT_AUTHOR)
+
+    return ProjectPaths(project_id=project_id, root=root)
+
+
+# Directories/files that are never part of an Ansible project and only bloat the
+# import — virtualenvs, caches, VCS internals, editor/OS cruft, ad-hoc logs.
+# Real projects on disk routinely carry these (e.g. opnet shipped a 5000-file .venv),
+# so copying them verbatim corrupts detection and the per-project git history.
+_IGNORE_DIRS = {
+    ".git", ".venv", "venv", "env", "__pycache__", ".pytest_cache", ".mypy_cache",
+    ".ruff_cache", ".tox", "node_modules", ".idea", ".vscode", ".cache",
+}
+_IGNORE_FILES = {".DS_Store", ".retry"}
+_IGNORE_SUFFIXES = {".pyc", ".pyo", ".retry", ".log"}
+
+
+def _import_ignore(_dir: str, names: list[str]) -> set[str]:
+    """`shutil.copytree` ignore callback: skip junk dirs/files anywhere in the tree."""
+    skip = set()
+    for n in names:
+        if n in _IGNORE_DIRS or n in _IGNORE_FILES:
+            skip.add(n)
+        elif any(n.endswith(suf) for suf in _IGNORE_SUFFIXES):
+            skip.add(n)
+    return skip
+
+
+def import_directory(name: str, source: Path) -> ProjectPaths:
+    """Import an existing Ansible project directory, preserving its layout but
+    dropping virtualenvs, caches, VCS internals and other non-project junk."""
+    source = source.resolve()
+    if not source.is_dir():
+        raise StorageError(f"source is not a directory: {source}")
+
+    project_id = _new_id()
+    root = _project_root(project_id)
+    shutil.copytree(source, root, dirs_exist_ok=False, symlinks=False, ignore=_import_ignore)
+
+    repo = Repo.init(root)
+    repo.index.add([str(p.relative_to(root)) for p in root.rglob("*")
+                    if p.is_file() and ".git" not in p.parts])
+    repo.index.commit(f"Import {name} from {source.name}", author=GIT_AUTHOR, committer=GIT_AUTHOR)
+    return ProjectPaths(project_id=project_id, root=root)
+
+
+def delete_project(project_id: str) -> None:
+    root = _project_root(project_id)
+    if root.exists():
+        shutil.rmtree(root)
+
+
+def _resolve_safe(project_root: Path, relative: str) -> Path:
+    """Resolve a path inside a project, refusing escapes via .. or absolute paths."""
+    candidate = (project_root / relative).resolve()
+    project_root_resolved = project_root.resolve()
+    try:
+        candidate.relative_to(project_root_resolved)
+    except ValueError as exc:
+        raise StorageError(f"path escapes project: {relative}") from exc
+    return candidate
+
+
+def read_file(project_id: str, relative: str) -> str:
+    pp = paths_for(project_id)
+    target = _resolve_safe(pp.root, relative)
+    if not target.is_file():
+        raise StorageError(f"file not found: {relative}")
+    return target.read_text()
+
+
+def write_file(project_id: str, relative: str, content: str, message: str | None = None) -> None:
+    pp = paths_for(project_id)
+    target = _resolve_safe(pp.root, relative)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+
+    # _resolve_safe() returns a symlink-resolved path; compute the in-repo
+    # relative path against the equally-resolved root, otherwise relative_to()
+    # raises when the project root lives behind a symlink (macOS /var, bind mounts).
+    root_resolved = pp.root.resolve()
+    repo = Repo(pp.root)
+    repo.index.add([str(target.relative_to(root_resolved))])
+    if repo.is_dirty(index=True, working_tree=False, untracked_files=False):
+        repo.index.commit(
+            message or f"Update {target.relative_to(root_resolved)}",
+            author=GIT_AUTHOR, committer=GIT_AUTHOR,
+        )
+
+
+def commit_all(project_id: str, message: str) -> list[str]:
+    """Stage and commit every working-tree change in the project, returning the
+    list of changed paths. Used after a run so artifacts the playbook wrote into
+    the repo (generated SSH keys, rendered configs, fetched files) are captured,
+    versioned and visible in the Files tab instead of being invisible/ephemeral.
+    Returns [] if nothing changed."""
+    pp = paths_for(project_id)
+    repo = Repo(pp.root)
+    # Untracked + modified + deleted, excluding our own .git.
+    changed = [item.a_path or item.b_path
+               for item in repo.index.diff(None)]  # modified/deleted tracked
+    changed += repo.untracked_files
+    changed = sorted({c for c in changed if c and ".git" not in c.split("/")})
+    if not changed:
+        return []
+    repo.git.add(A=True)
+    if repo.is_dirty(index=True, working_tree=False, untracked_files=True):
+        repo.index.commit(message, author=GIT_AUTHOR, committer=GIT_AUTHOR)
+    return changed
+
+
+def delete_file(project_id: str, relative: str) -> None:
+    pp = paths_for(project_id)
+    target = _resolve_safe(pp.root, relative)
+    if not target.exists():
+        return
+    rel = str(target.relative_to(pp.root.resolve()))
+    if target.is_file():
+        target.unlink()
+    else:
+        shutil.rmtree(target)
+    repo = Repo(pp.root)
+    repo.index.remove([rel], r=True, working_tree=False)
+    repo.index.commit(f"Delete {rel}", author=GIT_AUTHOR, committer=GIT_AUTHOR)
+
+
+# ---- Git remote sync (push / pull) -----------------------------------------
+
+def _auth_url(url: str, username: str | None, token: str | None) -> str:
+    """Splice username/token into an http(s) URL for a single operation.
+
+    Returns the URL unchanged for SSH (auth comes from the agent) or when no
+    credentials are supplied. The caller must never log or persist the result.
+    """
+    if username and token:
+        p = urlparse(url)
+        if p.scheme in ("http", "https"):
+            netloc = f"{username}:{token}@{p.hostname}"
+            if p.port:
+                netloc += f":{p.port}"
+            return urlunparse(p._replace(netloc=netloc))
+    return url
+
+
+def git_info(project_id: str) -> dict:
+    """Remote URL, current branch, dirty flag, and the HEAD commit summary."""
+    pp = paths_for(project_id)
+    repo = Repo(pp.root)
+    try:
+        remote = repo.remote("origin").url
+    except ValueError:
+        remote = None
+    try:
+        branch = repo.active_branch.name
+    except TypeError:
+        branch = "(detached)"
+    last = None
+    try:
+        c = repo.head.commit
+        msg = (c.message or "").strip().splitlines()
+        last = {"message": msg[0] if msg else "", "when": c.committed_datetime.isoformat()}
+    except Exception:
+        pass
+    return {"remote": remote, "branch": branch,
+            "dirty": repo.is_dirty(untracked_files=True), "last_commit": last}
+
+
+def set_remote(project_id: str, url: str) -> None:
+    """Set (or replace) the project's `origin` remote."""
+    url = (url or "").strip()
+    if not url:
+        raise StorageError("remote url is required")
+    repo = Repo(paths_for(project_id).root)
+    try:
+        repo.delete_remote("origin")
+    except Exception:
+        pass
+    repo.create_remote("origin", url)
+
+
+def git_push(project_id: str, username: str | None = None, token: str | None = None) -> str:
+    repo = Repo(paths_for(project_id).root)
+    try:
+        remote_url = repo.remote("origin").url
+    except ValueError:
+        raise StorageError("no remote configured — set one first")
+    try:
+        branch = repo.active_branch.name
+    except TypeError:
+        raise StorageError("cannot push a detached HEAD")
+    auth = _auth_url(remote_url, username, token)
+    try:
+        out = repo.git.push(auth, f"HEAD:refs/heads/{branch}")
+    except GitCommandError as e:
+        msg = (e.stderr or str(e)).replace(auth, remote_url)
+        raise StorageError(f"push failed: {msg.strip()}")
+    return out.strip() or f"pushed {branch} to origin"
+
+
+def git_pull(project_id: str, username: str | None = None, token: str | None = None) -> str:
+    repo = Repo(paths_for(project_id).root)
+    try:
+        remote_url = repo.remote("origin").url
+    except ValueError:
+        raise StorageError("no remote configured — set one first")
+    try:
+        branch = repo.active_branch.name
+    except TypeError:
+        raise StorageError("cannot pull onto a detached HEAD")
+    auth = _auth_url(remote_url, username, token)
+    # `--ff-only` keeps us from silently merging divergent histories — a non-FF
+    # surfaces as a clear error for the user to resolve. (`git merge` needs a
+    # committer identity even for a fast-forward; the image sets one system-wide.)
+    try:
+        out = repo.git.pull("--ff-only", auth, branch)
+    except GitCommandError as e:
+        msg = (e.stderr or str(e)).replace(auth, remote_url)
+        raise StorageError(f"pull failed: {msg.strip()}")
+    return out.strip() or f"pulled {branch} from origin"
+
+
+def walk_files(project_id: str) -> Iterable[Path]:
+    """Yield every file in a project as a path relative to the project root."""
+    pp = paths_for(project_id)
+    for p in pp.root.rglob("*"):
+        if p.is_file() and ".git" not in p.parts:
+            yield p.relative_to(pp.root)
+
+
+def file_tree(project_id: str) -> dict:
+    """Return a nested dict representing the project's file tree."""
+    pp = paths_for(project_id)
+    tree: dict = {}
+    for rel in walk_files(project_id):
+        node = tree
+        parts = rel.parts
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = None  # leaf = file
+    return tree

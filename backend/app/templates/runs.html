@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Runs — Playforge{% endblock %}
+{% block breadcrumb %}<span>Runs</span>{% endblock %}
+{% block content %}
+<section x-data="runsPage()" x-init="load()">
+
+  <div class="card">
+    <div class="card-header">
+      <h3>Run history</h3>
+      <span class="text-sm muted" x-text="`${runs.length} run(s)`"></span>
+    </div>
+
+    <div class="row wrap gap-sm" style="align-items:flex-end; margin-bottom: 0.75rem;">
+      <label>Project
+        <select x-model="filters.project_id" @change="reload()">
+          <option value="">All projects</option>
+          <template x-for="p in projects" :key="p.id">
+            <option :value="p.id" x-text="p.name"></option>
+          </template>
+        </select>
+      </label>
+      <label>Status
+        <select x-model="filters.status" @change="reload()">
+          <option value="">Any status</option>
+          <option value="ok">ok</option>
+          <option value="failed">failed</option>
+          <option value="running">running</option>
+          <option value="canceled">canceled</option>
+        </select>
+      </label>
+      <label>Playbook
+        <input type="text" x-model="filters.playbook" @input.debounce.400ms="reload()"
+               placeholder="contains…">
+      </label>
+      <button class="btn btn-secondary btn-sm" @click="clearFilters()">Clear</button>
+    </div>
+
+    <template x-if="!loading && runs.length === 0">
+      <div class="empty-state">
+        <i class="icon" data-lucide="play-circle"></i>
+        <p>No runs match. Pick a project, choose a playbook, hit Run.</p>
+      </div>
+    </template>
+
+    <table x-show="runs.length">
+      <thead>
+        <tr>
+          <th>Status</th><th>Project</th><th>Playbook</th>
+          <th>Tags</th><th>Started</th><th>Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="r in runs" :key="r.id">
+          <tr class="clickable" @click="window.location.href = `/projects/${r.project_id}/runs/${r.id}`">
+            <td><span :class="`badge ${badgeFor(r.status)}`" x-text="r.status"></span></td>
+            <td x-text="r.project_name"></td>
+            <td class="font-mono text-xs" x-text="r.playbook"></td>
+            <td class="text-xs muted" x-text="r.tags || '—'"></td>
+            <td class="text-xs muted" x-text="formatTime(r.started_at)"></td>
+            <td class="text-xs muted" x-text="duration(r)"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+
+    <div class="row gap-sm mt-2" x-show="runs.length >= pageSize || offset > 0">
+      <button class="btn btn-secondary btn-sm" @click="prevPage()" :disabled="offset === 0">← Newer</button>
+      <button class="btn btn-secondary btn-sm" @click="nextPage()" :disabled="runs.length < pageSize">Older →</button>
+    </div>
+  </div>
+
+</section>
+
+<script>
+function runsPage() {
+  return {
+    runs: [], projects: [], loading: false,
+    filters: { project_id: "", status: "", playbook: "" },
+    offset: 0, pageSize: 100,
+
+    async load() {
+      this.projects = await fetch("/api/projects").then(r => r.ok ? r.json() : []);
+      await this.reload();
+    },
+    async reload() {
+      this.offset = 0;
+      await this.fetchRuns();
+    },
+    async fetchRuns() {
+      this.loading = true;
+      const q = new URLSearchParams();
+      if (this.filters.project_id) q.set("project_id", this.filters.project_id);
+      if (this.filters.status) q.set("status", this.filters.status);
+      if (this.filters.playbook) q.set("playbook", this.filters.playbook);
+      q.set("limit", this.pageSize); q.set("offset", this.offset);
+      try {
+        this.runs = await fetch(`/api/runs?${q}`).then(r => r.ok ? r.json() : []);
+      } finally { this.loading = false; }
+      this.$nextTick(() => lucide.createIcons());
+    },
+    clearFilters() {
+      this.filters = { project_id: "", status: "", playbook: "" };
+      this.reload();
+    },
+    nextPage() { this.offset += this.pageSize; this.fetchRuns(); },
+    prevPage() { this.offset = Math.max(0, this.offset - this.pageSize); this.fetchRuns(); },
+
+    badgeFor(s) {
+      if (s === "ok" || s === "successful") return "ok";
+      if (s === "canceled") return "warn";
+      if (s === "failed") return "fail";
+      if (s === "running") return "run";
+      return "muted";
+    },
+    formatTime(iso) { return iso ? new Date(iso).toLocaleString() : ""; },
+    duration(r) {
+      if (!r.ended_at || !r.started_at) return "—";
+      const s = Math.round((new Date(r.ended_at) - new Date(r.started_at)) / 1000);
+      return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+    },
+  };
+}
+</script>
+{% endblock %}

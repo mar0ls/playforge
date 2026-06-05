@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Projects — Playforge{% endblock %}
+{% block breadcrumb %}<span>Projects</span>{% endblock %}
+{% block header_actions %}
+  <button class="btn-secondary" @click="$dispatch('open-import', 'git')">
+    <i class="icon" data-lucide="git-branch"></i> Clone from git
+  </button>
+  <button class="btn-secondary" @click="$dispatch('open-import', 'path')">
+    <i class="icon" data-lucide="folder-input"></i> Open server path
+  </button>
+  <button class="btn-secondary" @click="$dispatch('open-import', 'zip')">
+    <i class="icon" data-lucide="upload"></i> Upload .zip
+  </button>
+  <button class="btn" @click="$dispatch('open-import', 'new')">
+    <i class="icon" data-lucide="plus"></i> New project
+  </button>
+{% endblock %}
+
+{% block content %}
+<section x-data="projectsPage()" x-init="initFromQuery(); load()"
+         @open-import.window="openMode($event.detail)">
+
+  <!-- Modal-like import card -->
+  <div class="card" x-show="mode !== ''" x-cloak>
+    <div class="card-header">
+      <h3>
+        <span x-show="mode === 'new'">Create empty project</span>
+        <span x-show="mode === 'path'">Open from a path on the app server</span>
+        <span x-show="mode === 'zip'">Upload .zip from your computer</span>
+        <span x-show="mode === 'git'">Clone from a git URL</span>
+      </h3>
+      <button class="btn-ghost" @click="mode = ''"><i class="icon" data-lucide="x"></i></button>
+    </div>
+
+    <!-- New project wizard -->
+    <div x-show="mode === 'new'">
+      <div class="row gap-sm text-sm muted" style="margin-bottom:.75rem;">
+        <span :style="wizard.step===1 ? 'font-weight:600;color:var(--fg)' : ''">1 · Basics</span>
+        <span>›</span>
+        <span :style="wizard.step===2 ? 'font-weight:600;color:var(--fg)' : ''">2 · First playbook</span>
+        <span>›</span>
+        <span :style="wizard.step===3 ? 'font-weight:600;color:var(--fg)' : ''">3 · First host</span>
+      </div>
+
+      <!-- Step 1: basics -->
+      <div x-show="wizard.step === 1">
+        <label>Project name
+          <input type="text" x-model="form.name" required placeholder="my-infra"
+                 @keydown.enter.prevent="form.name.trim() && (wizard.step = 2)">
+        </label>
+        <label>Description (optional)
+          <input type="text" x-model="wizard.description" placeholder="What this project manages">
+        </label>
+        <p class="muted text-sm">Generates the recommended Ansible layout (inventories/, group_vars/, roles/, playbooks/site.yml).</p>
+        <div class="row gap-sm mt-2">
+          <button type="button" @click="wizard.step = 2" :disabled="!form.name.trim()">Next →</button>
+        </div>
+      </div>
+
+      <!-- Step 2: starter playbook -->
+      <div x-show="wizard.step === 2">
+        <label>Starter playbook
+          <select x-model="wizard.templateId">
+            <option value="">Blank — keep the default playbooks/site.yml</option>
+            <template x-for="t in playbookTemplates" :key="t.id">
+              <option :value="t.id" x-text="`${t.category}: ${t.name}`"></option>
+            </template>
+          </select>
+        </label>
+        <p class="muted text-sm" x-show="wizard.templateId"
+           x-text="(playbookTemplates.find(t => t.id === wizard.templateId) || {}).description"></p>
+        <div class="row gap-sm mt-2">
+          <button type="button" class="btn-secondary" @click="wizard.step = 1">← Back</button>
+          <button type="button" @click="wizard.step = 3">Next →</button>
+        </div>
+      </div>
+
+      <!-- Step 3: first host (optional) -->
+      <div x-show="wizard.step === 3">
+        <p class="muted text-sm">Optionally add your first host to the production inventory. Leave the name blank to skip.</p>
+        <div class="form-row">
+          <label>Host name
+            <input type="text" x-model="wizard.host.name" placeholder="web1.example.com">
+          </label>
+          <label>Group
+            <input type="text" x-model="wizard.host.group" placeholder="all">
+          </label>
+        </div>
+        <label>Address (ansible_host, optional)
+          <input type="text" x-model="wizard.host.address" placeholder="10.0.0.10">
+        </label>
+        <span x-show="wizard.error" class="text-sm" style="color: var(--fail);" x-text="wizard.error"></span>
+        <div class="row gap-sm mt-2">
+          <button type="button" class="btn-secondary" @click="wizard.step = 2">← Back</button>
+          <button type="button" @click="finishWizard()" :disabled="wizard.busy">
+            <i class="icon" data-lucide="check"></i>
+            <span x-text="wizard.busy ? 'Creating…' : 'Create project'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <form x-show="mode === 'path'" @submit.prevent="importPath()">
+      <label>Absolute path on the app server
+        <input type="text" x-model="form.path" required placeholder="/import/gitea/opnet or /data/import/my-project">
+      </label>
+      <label>Project name (optional, defaults to directory name)
+        <input type="text" x-model="form.name" placeholder="">
+      </label>
+      <div class="muted text-sm">
+        <p>
+          This reads from the filesystem of the machine the app runs on
+          (browsers can't access your client filesystem). The directory is copied
+          into the GUI's project store with a fresh git history; your original is untouched.
+        </p>
+        <p>
+          <strong>If your playbooks live on a different machine</strong> (e.g. your laptop), use
+          one of:
+          <em>Clone from git</em> (push the repo somewhere reachable),
+          <em>Upload .zip</em> (zip the folder and drop it here), or
+          <code>rsync</code> the folder onto this server and point at the result.
+        </p>
+        <p>To reach paths outside <code>/data</code>, bind-mount them in <code>docker-compose.yml</code> — see the commented <code>/import/*</code> examples.</p>
+      </div>
+      <button type="submit">Open</button>
+    </form>
+
+    <form x-show="mode === 'zip'" @submit.prevent="importZip()" enctype="multipart/form-data">
+      <label>Project name
+        <input type="text" x-model="form.name" required>
+      </label>
+      <label>Zip file
+        <input type="file" accept=".zip" @change="form.file = $event.target.files[0]" required>
+      </label>
+      <button type="submit" :disabled="!form.file">Import</button>
+    </form>
+
+    <form x-show="mode === 'git'" @submit.prevent="importGit()">
+      <label>Git URL
+        <input type="text" x-model="form.gitUrl" required
+               placeholder="https://github.com/foo/ansible-thing.git  or  git@gitea.local:foo/bar.git">
+      </label>
+      <div class="form-row">
+        <label>Branch (optional)
+          <input type="text" x-model="form.branch" placeholder="main">
+        </label>
+        <label>Project name (optional)
+          <input type="text" x-model="form.name" placeholder="defaults to repo name">
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Username (HTTPS, optional)
+          <input type="text" x-model="form.username" placeholder="for private repos">
+        </label>
+        <label>Token / password (HTTPS, optional)
+          <input type="password" x-model="form.token" placeholder="never persisted, only used for clone">
+        </label>
+      </div>
+      <p class="muted text-sm">
+        For SSH URLs (<code>git@host:owner/repo.git</code>) bind-mount your host SSH agent socket
+        in <code>docker-compose.yml</code> (see the commented <code>SSH_AUTH_SOCK</code> example).
+        For private HTTPS use a personal access token in the token field — it is sent only for the
+        clone and discarded after.
+      </p>
+      <button type="submit" :disabled="cloning">
+        <i class="icon" data-lucide="git-branch"></i>
+        <span x-text="cloning ? 'Cloning…' : 'Clone'"></span>
+      </button>
+    </form>
+  </div>
+
+  <!-- Project list -->
+  <template x-if="projects.length === 0 && mode === ''">
+    <div class="empty-state">
+      <i class="icon" data-lucide="folder-plus"></i>
+      <p>No projects yet. Use one of the actions above to add one.</p>
+    </div>
+  </template>
+
+  <div class="panel-grid">
+    <template x-for="p in projects" :key="p.id">
+      <div class="card">
+        <div class="row between">
+          <div>
+            <a :href="`/projects/${p.id}`"><strong x-text="p.name"></strong></a>
+            <div class="muted text-xs font-mono" x-text="p.id"></div>
+            <div class="text-sm" x-text="p.description"></div>
+          </div>
+          <div class="row gap-sm">
+            <a :href="`/projects/${p.id}`" class="btn btn-sm"><i class="icon" data-lucide="arrow-right"></i> Open</a>
+            <button class="btn-secondary btn-sm danger" @click="remove(p.id)"><i class="icon" data-lucide="trash-2"></i></button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+</section>
+
+<script>
+function projectsPage() {
+  return {
+    projects: [], mode: "", cloning: false,
+    form: { name: "", path: "", file: null, gitUrl: "", branch: "", username: "", token: "" },
+    playbookTemplates: [],
+    wizard: { step: 1, description: "", templateId: "", host: { name: "", group: "all", address: "" }, busy: false, error: "" },
+
+    initFromQuery() {
+      const q = new URLSearchParams(location.search);
+      if (q.get("new") === "1") this.mode = "new";
+      else if (q.get("import")) this.mode = q.get("import");
+    },
+    openMode(m) {
+      this.mode = m;
+      this.form = { name: "", path: "", file: null, gitUrl: "", branch: "", username: "", token: "" };
+      this.wizard = { step: 1, description: "", templateId: "", host: { name: "", group: "all", address: "" }, busy: false, error: "" };
+    },
+
+    async load() {
+      const r = await fetch("/api/projects");
+      this.projects = await r.json();
+      if (!this.playbookTemplates.length) {
+        this.playbookTemplates = await fetch("/api/library/playbook-templates")
+          .then(r => r.ok ? r.json() : []).catch(() => []);
+      }
+      this.$nextTick(() => lucide.createIcons());
+    },
+    async finishWizard() {
+      if (this.wizard.busy) return;
+      this.wizard.busy = true; this.wizard.error = "";
+      try {
+        // 1. Create the project (scaffolds the standard layout).
+        let r = await fetch("/api/projects", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({name: this.form.name.trim(), description: this.wizard.description || ""}),
+        });
+        if (!r.ok) { this.wizard.error = await r.text(); return; }
+        const proj = await r.json();
+
+        // 2. Optional starter playbook from the library.
+        if (this.wizard.templateId) {
+          const tpl = this.playbookTemplates.find(t => t.id === this.wizard.templateId);
+          if (tpl) {
+            await fetch(`/api/projects/${proj.id}/playbook`, {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({path: `playbooks/${tpl.id}.yml`, spec: tpl.spec, overwrite: true}),
+            });  // non-fatal on failure — project already exists
+          }
+        }
+
+        // 3. Optional first host in the production inventory.
+        const h = this.wizard.host;
+        if (h.name && h.name.trim()) {
+          const vars = {};
+          if (h.address && h.address.trim()) vars.ansible_host = h.address.trim();
+          await fetch(`/api/projects/${proj.id}/inventory/host`, {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({inventory_path: "inventories/production",
+                                  name: h.name.trim(), group: (h.group || "all").trim(), vars}),
+          });
+        }
+
+        window.location.href = `/projects/${proj.id}`;
+      } finally { this.wizard.busy = false; }
+    },
+    async importPath() {
+      const r = await fetch("/api/projects/import-path", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: this.form.path, name: this.form.name || null}),
+      });
+      if (r.ok) { this.mode = ""; await this.load(); } else alert(await r.text());
+    },
+    async importZip() {
+      const fd = new FormData();
+      fd.append("name", this.form.name);
+      fd.append("upload", this.form.file);
+      const r = await fetch("/api/projects/import-zip", {method: "POST", body: fd});
+      if (r.ok) { this.mode = ""; await this.load(); } else alert(await r.text());
+    },
+    async importGit() {
+      this.cloning = true;
+      try {
+        const body = {
+          url: this.form.gitUrl,
+          name: this.form.name || null,
+          branch: this.form.branch || null,
+          username: this.form.username || null,
+          token: this.form.token || null,
+        };
+        const r = await fetch("/api/projects/import-git", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body),
+        });
+        if (r.ok) { this.mode = ""; await this.load(); }
+        else alert(await r.text());
+      } finally { this.cloning = false; }
+    },
+    async remove(id) {
+      if (!confirm("Delete this project and all its files?")) return;
+      await fetch(`/api/projects/${id}`, {method: "DELETE"});
+      await this.load();
+    },
+  };
+}
+</script>
+{% endblock %}
