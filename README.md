@@ -1,5 +1,7 @@
 # Playforge
 
+![Playforge dashboard](assets/screen.png)
+
 A self-hosted web UI for managing and running Ansible — a simpler, friendlier AWX
 that runs from a single `docker compose up`, with no Postgres, Redis or Receptor.
 
