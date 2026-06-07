@@ -29,10 +29,12 @@ def extract_files(reply: str) -> list[dict]:
     seen: set[str] = set()
     for lang, raw_path, body in _FILE_BLOCK_RE.findall(reply or ""):
         stripped = raw_path.strip()
-        # Check the raw path (before lstrip) — otherwise ./../etc/passwd would slip through.
+        # Check the raw path first — otherwise ./../etc/passwd would slip through.
         if not stripped or _UNSAFE_PATH.search(stripped):
             continue
-        path = stripped.lstrip("./")
+        # Strip a single leading "./" only — lstrip("./") would eat real dotfiles
+        # (`.env` → `env`) and mangle paths like `.../foo`.
+        path = stripped[2:] if stripped.startswith("./") else stripped
         if not path or _UNSAFE_PATH.search(path) or path in seen:
             continue
         seen.add(path)

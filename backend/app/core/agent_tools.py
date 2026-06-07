@@ -117,18 +117,20 @@ def build_tools(project_id: str, *, get_run=None) -> dict[str, Tool]:
         return {"deleted": a["path"]}
 
     def t_web_fetch(a: dict) -> dict:
-        url = str(a.get("url", ""))
-        host = re.sub(r"^https?://", "", url).split("/")[0].lower()
-        if not any(host == d or host.endswith("." + d) for d in _WEB_ALLOW):
-            return {"error": f"domain not allowed; only {', '.join(_WEB_ALLOW)}"}
-        # Reuse the module-doc fetcher when a module name is given; otherwise refuse
-        # (we don't do arbitrary scraping).
+        # This tool only fetches module docs (from docs.ansible.com, hardcoded in
+        # fetch_module_doc_web) — it is NOT an arbitrary URL fetcher. So it keys off
+        # `module`, not a `url`. If a `url` is given, enforce the doc-host allow-list.
+        url = str(a.get("url", "")).strip()
+        if url:
+            host = re.sub(r"^https?://", "", url).split("/")[0].lower()
+            if not any(host == d or host.endswith("." + d) for d in _WEB_ALLOW):
+                return {"error": f"domain not allowed; only {', '.join(_WEB_ALLOW)}"}
         mod = a.get("module")
-        if mod:
-            sig = doc_index.fetch_module_doc_web(str(mod))
-            return {"module": mod, "signature": doc_index.format_module_signature(str(mod), allow_web=True)
-                    if sig else None}
-        return {"error": "provide a 'module' name to fetch its docs"}
+        if not mod:
+            return {"error": "provide a 'module' name to fetch its docs"}
+        sig = doc_index.fetch_module_doc_web(str(mod))
+        return {"module": mod,
+                "signature": doc_index.format_module_signature(str(mod), allow_web=True) if sig else None}
 
     tools = [
         Tool("read_file", READ, "Read a project file. args: {path}", t_read_file),

@@ -224,7 +224,7 @@ def write_file(project_id: str, relative: str, content: str, message: str | None
 # Filename patterns that usually hold generated secrets (private keys, passwords).
 # Used by `commit_all(protect_secrets=True)` to keep them OUT of git history.
 _SECRET_PATTERNS = (
-    re.compile(r"(^|/)id_[a-z0-9]+$"),          # id_rsa, id_ed25519, id_ssh_rsa_*
+    re.compile(r"(^|/)id_[a-z0-9_]+$", re.I),   # id_rsa, id_ed25519, id_ssh_rsa_foo
     re.compile(r"\.(pem|key)$"),                # *.pem, *.key
     re.compile(r"(^|/)[^/]*private[^/]*$", re.I),
     re.compile(r"(^|/)wg[-_].*\.conf$"),        # wireguard configs

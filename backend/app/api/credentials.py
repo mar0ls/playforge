@@ -113,14 +113,12 @@ class CredTestIn(BaseModel):
     project_id: str
     inventory: str = ""        # rel path; falls back to project default
     host_pattern: str = "all"  # which hosts to probe — usually a group or single host
-    become: bool = False       # also exercise the become password if one is on this cred id
 
 
 @router.post("/{cred_id}/test")
 async def test_credential(cred_id: int, payload: CredTestIn):
     """Probe a credential via a one-task playbook. Per-host ✓/✗ for the UI."""
-    from pathlib import Path as _Path
-    import tempfile as _tempfile
+    import uuid as _uuid
 
     from app.core import storage
     from app.core.runner import RunRequest, run_playbook
@@ -139,9 +137,9 @@ async def test_credential(cred_id: int, payload: CredTestIn):
         raise HTTPException(400, "credential has no stored secret")
 
     # Use the playbook runner (not run_adhoc) — it already wires up every
-    # credential kind; ad-hoc would need its own credential plumbing.
-    tmp = _Path(_tempfile.mkdtemp(prefix="cred-test-"))
-    playbook_rel = "_cred_probe.yml"
+    # credential kind; ad-hoc would need its own credential plumbing. Unique
+    # filename per request so concurrent probes (or an overlapping run) don't clobber.
+    playbook_rel = f"_cred_probe_{_uuid.uuid4().hex[:8]}.yml"
     paths = storage.paths_for(payload.project_id)
     probe_path = paths.root / playbook_rel
     try:
@@ -201,8 +199,5 @@ async def test_credential(cred_id: int, payload: CredTestIn):
                               "msg": (f.get("result") or {}).get("msg") or f.get("error") or ""}
                              for f in result.failures]}
     finally:
-        try:
-            import shutil as _shutil
-            _shutil.rmtree(tmp, ignore_errors=True)
-        except Exception:
-            pass
+        # The probe playbook is unlinked in the inner finally; nothing else to clean.
+        pass

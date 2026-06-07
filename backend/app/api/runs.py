@@ -127,8 +127,13 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
         # WireGuard keys (and any other key material the playbook needs as a file)
         # are written to a 0600 temp dir at run time; their paths are exposed as
         # extra-vars `wireguard_keys` (name -> path) so a playbook can reference them.
-        wg = {c.name: cred_store.read_secret(c.id) for c in creds
-              if c.kind == "wireguard_key" and cred_store.read_secret(c.id)}
+        wg: dict[str, str] = {}
+        for c in creds:
+            if c.kind != "wireguard_key":
+                continue
+            secret = cred_store.read_secret(c.id)   # read+decrypt once per credential
+            if secret:
+                wg[c.name] = secret
         if wg:
             base["wireguard_keys"] = wg
 
