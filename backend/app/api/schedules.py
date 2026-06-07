@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.scheduler import (
-    next_fire_iso, sync_schedule, unsync_schedule, validate_cron,
+    next_fire_iso, sync_schedule, unsync_schedule, validate_cron, validate_timezone,
 )
 from app.models.db import Project, RunTemplate, Schedule, SessionLocal
 
@@ -22,6 +22,7 @@ class ScheduleIn(BaseModel):
     template_id: int
     cron_expr: str
     enabled: bool = True
+    timezone: str = ""   # IANA name, e.g. "Europe/Warsaw"; empty = UTC
 
 
 class ScheduleOut(BaseModel):
@@ -30,6 +31,7 @@ class ScheduleOut(BaseModel):
     project_id: str
     template_id: int
     cron_expr: str
+    timezone: str
     enabled: bool
     last_run_at: datetime | None
     last_run_id: int | None
@@ -39,11 +41,12 @@ class ScheduleOut(BaseModel):
 
 
 def _to_out(s: Schedule) -> ScheduleOut:
+    tz = getattr(s, "timezone", "") or ""
     return ScheduleOut(
         id=s.id, name=s.name, project_id=s.project_id, template_id=s.template_id,
-        cron_expr=s.cron_expr, enabled=s.enabled,
+        cron_expr=s.cron_expr, timezone=tz, enabled=s.enabled,
         last_run_at=s.last_run_at, last_run_id=s.last_run_id,
-        next_fire_at=next_fire_iso(s.cron_expr) if s.enabled else None,
+        next_fire_at=next_fire_iso(s.cron_expr, tz=tz) if s.enabled else None,
         created_at=s.created_at, updated_at=s.updated_at,
     )
 
@@ -59,6 +62,7 @@ async def list_schedules():
 async def create_schedule(payload: ScheduleIn):
     try:
         cron = validate_cron(payload.cron_expr)
+        tz = validate_timezone(payload.timezone)
     except ValueError as e:
         raise HTTPException(400, str(e))
     async with SessionLocal() as session:
@@ -68,7 +72,8 @@ async def create_schedule(payload: ScheduleIn):
             raise HTTPException(404, "template not found")
         s = Schedule(
             name=payload.name, project_id=payload.project_id,
-            template_id=payload.template_id, cron_expr=cron, enabled=payload.enabled,
+            template_id=payload.template_id, cron_expr=cron, timezone=tz,
+            enabled=payload.enabled,
         )
         session.add(s)
         await session.commit()
@@ -81,6 +86,7 @@ async def create_schedule(payload: ScheduleIn):
 async def update_schedule(schedule_id: int, payload: ScheduleIn):
     try:
         cron = validate_cron(payload.cron_expr)
+        tz = validate_timezone(payload.timezone)
     except ValueError as e:
         raise HTTPException(400, str(e))
     async with SessionLocal() as session:
@@ -91,6 +97,7 @@ async def update_schedule(schedule_id: int, payload: ScheduleIn):
         s.project_id = payload.project_id
         s.template_id = payload.template_id
         s.cron_expr = cron
+        s.timezone = tz
         s.enabled = payload.enabled
         s.updated_at = datetime.utcnow()
         await session.commit()

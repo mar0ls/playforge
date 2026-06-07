@@ -1,0 +1,94 @@
+  <div x-show="tab === 'inventory'" x-cloak>
+    <div class="panel-grid aside-right">
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Inventory</h3>
+            <select x-model="invTab.path" @change="loadInvTabData()" style="max-width: 320px;">
+              <option value="">— pick an inventory —</option>
+              <template x-for="inv in (detected.inventories || [])" :key="inv">
+                <option :value="inv" x-text="inv"></option>
+              </template>
+            </select>
+          </div>
+
+          <template x-if="invTab.path && invTab.data && !invTab.data.hosts.length">
+            <div class="muted text-sm">No hosts found yet in <code x-text="invTab.path"></code>. Add one on the right.</div>
+          </template>
+
+          <template x-for="(g, name) in (invTab.data.groups || {})" :key="name">
+            <div class="mt-1" x-show="name !== 'all' && name !== 'ungrouped'">
+              <h4 class="font-mono" style="text-transform:none; letter-spacing:0; color: var(--text-soft);">[<span x-text="name"></span>]</h4>
+              <table>
+                <thead><tr><th>Host</th><th>Member of</th></tr></thead>
+                <tbody>
+                  <template x-for="h in g.hosts" :key="`${name}-${h}`">
+                    <tr>
+                      <td class="font-mono text-sm" x-text="h"></td>
+                      <td class="text-xs muted" x-text="hostGroups(h).join(', ')"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-if="g.children && g.children.length">
+                <div class="text-xs muted">child groups: <span x-text="g.children.join(', ')"></span></div>
+              </template>
+            </div>
+          </template>
+
+          <template x-if="invTab.path">
+            <div class="mt-2">
+              <h4>vars files</h4>
+              <div class="text-xs muted" x-show="!invTab.varsFiles.length">
+                No group_vars or host_vars detected at this inventory level. Use the Files tab to create them.
+              </div>
+              <ul class="tree text-sm">
+                <template x-for="f in invTab.varsFiles" :key="f">
+                  <li><a href="#" @click.prevent="tab='files'; openFile(f)" class="font-mono" x-text="f"></a></li>
+                </template>
+              </ul>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="card" x-show="invTab.path" x-cloak>
+        <h3>Add host</h3>
+        <form @submit.prevent="addHost()">
+          <label>Host name
+            <input type="text" x-model="addForm.name" required placeholder="web03.example.com">
+          </label>
+          <label>Group
+            <input type="text" x-model="addForm.group" required list="inv-groups"
+                   placeholder="pick an existing group or type a new one">
+            <datalist id="inv-groups">
+              <template x-for="g in Object.keys(invTab.data.groups || {})" :key="`opt-${g}`">
+                <option :value="g" x-show="g !== 'all' && g !== 'ungrouped'"></option>
+              </template>
+            </datalist>
+          </label>
+          <div class="form-row">
+            <label>ansible_host (IP, optional)
+              <input type="text" x-model="addForm.host" placeholder="10.0.0.42">
+            </label>
+            <label>ansible_user
+              <input type="text" x-model="addForm.user" placeholder="root">
+            </label>
+            <label>ansible_port
+              <input type="text" x-model="addForm.port" placeholder="22">
+            </label>
+          </div>
+          <label>Extra vars (YAML-ish, one `key=value` per line, optional)
+            <textarea x-model="addForm.extraRaw" rows="3" placeholder="ansible_python_interpreter=/usr/bin/python3"></textarea>
+          </label>
+          <div class="row gap-sm mt-1">
+            <button type="submit" :disabled="addForm.busy">
+              <i class="icon" data-lucide="plus"></i>
+              <span x-text="addForm.busy ? 'Saving…' : 'Add host'"></span>
+            </button>
+            <span x-show="addForm.lastSaved" class="text-xs muted" x-text="addForm.lastSaved"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>

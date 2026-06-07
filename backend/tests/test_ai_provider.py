@@ -146,3 +146,17 @@ def test_parse_critique_invalid_marks_error():
 def test_parse_critique_non_dict_marks_error():
     out = ai._parse_critique("[1, 2, 3]")
     assert out["_parse_error"] is True
+
+
+# --- per-provider self-critique default -------------------------------------
+
+def test_should_self_critique_tri_state():
+    from app.core.ai import _should_self_critique
+    # forced on / off regardless of provider
+    assert _should_self_critique("ollama", "1") is True
+    assert _should_self_critique("anthropic", "0") is False
+    # auto (default/empty/unknown): on for cloud, off for local
+    for v in ("auto", "", "anything"):
+        assert _should_self_critique("anthropic", v) is True
+        assert _should_self_critique("openai", v) is True
+        assert _should_self_critique("ollama", v) is False

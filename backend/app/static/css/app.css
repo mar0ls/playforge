@@ -237,6 +237,12 @@ tr.clickable:hover td { background: var(--bg-elev-2); }
 .tree a:hover { background: var(--bg-elev-2); text-decoration: none; }
 .tree a.active { background: var(--accent-soft); color: var(--accent); }
 .tree .dir { color: var(--muted-2); }
+.tree-row { display: flex; align-items: center; gap: 0.25rem; }
+.tree-row > .dir, .tree-row > a:not(.tree-actions a) { flex: 1; min-width: 0; }
+.tree-actions { display: none; gap: 0.35rem; margin-left: auto; padding-right: 0.2rem; }
+.tree-row:hover .tree-actions { display: inline-flex; }
+.tree-actions a { padding: 0 0.15rem; opacity: 0.7; }
+.tree-actions a:hover { opacity: 1; background: none; }
 
 pre.log {
   background: #010409; color: #c9d1d9;

@@ -23,6 +23,8 @@ from apscheduler.triggers.cron import CronTrigger
 from croniter import croniter
 from sqlalchemy import select
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from app.core.runner import RunRequest, run_playbook, summarize
 from app.models.db import RunTemplate, Schedule, SessionLocal, Run
 
@@ -45,6 +47,28 @@ def validate_cron(expr: str) -> str:
     if not croniter.is_valid(expr):
         raise ValueError(f"invalid cron expression: {expr!r}")
     return expr
+
+
+def validate_timezone(tz_name: str) -> str:
+    """IANA name, or '' for UTC."""
+    tz_name = (tz_name or "").strip()
+    if not tz_name:
+        return ""
+    try:
+        ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        raise ValueError(f"unknown timezone: {tz_name!r}")
+    return tz_name
+
+
+def _tz_for(name: str) -> ZoneInfo | None:
+    """tzinfo for `name`, or None (= scheduler default UTC) when blank/unknown."""
+    if not name:
+        return None
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return None
 
 
 async def _fire(schedule_id: int) -> None:
@@ -110,6 +134,14 @@ def _job_id(schedule_id: int) -> str:
     return f"schedule-{schedule_id}"
 
 
+def _build_trigger(schedule: Schedule) -> CronTrigger:
+    """Per-schedule cron trigger that honours the row's `timezone` (empty = UTC)."""
+    tz = _tz_for(getattr(schedule, "timezone", "") or "")
+    if tz is not None:
+        return CronTrigger.from_crontab(schedule.cron_expr, timezone=tz)
+    return CronTrigger.from_crontab(schedule.cron_expr)
+
+
 def sync_schedule(schedule: Schedule) -> None:
     """Add / update / remove the APScheduler job for a Schedule row.
 
@@ -120,7 +152,7 @@ def sync_schedule(schedule: Schedule) -> None:
     job_id = _job_id(schedule.id)
     if schedule.enabled:
         s.add_job(
-            _fire, CronTrigger.from_crontab(schedule.cron_expr),
+            _fire, _build_trigger(schedule),
             args=[schedule.id], id=job_id, replace_existing=True,
             misfire_grace_time=300, coalesce=True, max_instances=1,
         )
@@ -147,18 +179,25 @@ async def load_all() -> None:
     for sched in rows:
         try:
             s.add_job(
-                _fire, CronTrigger.from_crontab(sched.cron_expr),
+                _fire, _build_trigger(sched),
                 args=[sched.id], id=_job_id(sched.id), replace_existing=True,
                 misfire_grace_time=300, coalesce=True, max_instances=1,
             )
         except Exception:
-            log.exception("could not load schedule %s (cron %r)", sched.id, sched.cron_expr)
+            log.exception("could not load schedule %s (cron %r tz %r)",
+                          sched.id, sched.cron_expr, getattr(sched, "timezone", ""))
 
 
-def next_fire_iso(cron_expr: str, base: datetime | None = None) -> str | None:
-    """Return the next fire time as ISO string, or None if cron is invalid."""
+def next_fire_iso(cron_expr: str, base: datetime | None = None, tz: str = "") -> str | None:
+    """Next fire time (ISO). `tz` = IANA name, '' = UTC. None on invalid cron."""
     try:
-        it = croniter(cron_expr, base or datetime.utcnow())
+        zone = _tz_for(tz) if tz else None
+        if zone is not None:
+            from datetime import datetime as _dt
+            now = _dt.now(zone)
+            it = croniter(cron_expr, base or now)
+        else:
+            it = croniter(cron_expr, base or datetime.utcnow())
         return it.get_next(datetime).isoformat()
     except Exception:
         return None

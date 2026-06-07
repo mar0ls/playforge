@@ -81,3 +81,43 @@ def test_no_project_collections_leaves_env_untouched(tmp_path, monkeypatch):
     # No collections/ dir → we don't override; the image's env var stays in effect.
     env = _project_envvars(tmp_path)
     assert "ANSIBLE_COLLECTIONS_PATH" not in env
+
+
+def test_become_password_writes_file_and_flag(tmp_path, monkeypatch):
+    """become_password_content → a 0600 file + --become-password-file in cmdline."""
+    import os
+    os.environ["ANSIBLE_GUI_DATA_DIR"] = str(tmp_path)
+    from app.core import storage
+    from app.core.runner import _runner_kwargs, RunRequest
+    p = storage.create_project("becomep")
+    try:
+        priv = tmp_path / "priv"; priv.mkdir()
+        req = RunRequest(project_id=p.project_id, playbook="playbooks/site.yml",
+                         become_password_content="s3cret")
+        kwargs = _runner_kwargs(req, priv)
+        assert "--become-password-file" in kwargs["cmdline"]
+        bp = priv / "become_pass"
+        assert bp.read_text().startswith("s3cret")
+        assert oct(bp.stat().st_mode)[-3:] == "600"
+    finally:
+        storage.delete_project(p.project_id)
+
+
+def test_wireguard_keys_written_and_exposed_as_extravar(tmp_path, monkeypatch):
+    import os
+    os.environ["ANSIBLE_GUI_DATA_DIR"] = str(tmp_path)
+    from app.core import storage
+    from app.core.runner import _runner_kwargs, RunRequest
+    p = storage.create_project("wgp")
+    try:
+        priv = tmp_path / "priv2"; priv.mkdir()
+        req = RunRequest(project_id=p.project_id, playbook="playbooks/site.yml",
+                         wireguard_keys={"vps01": "PRIVKEYDATA"})
+        kwargs = _runner_kwargs(req, priv)
+        wg = kwargs["extravars"]["wireguard_keys"]
+        assert "vps01" in wg
+        kf = priv / "wg_keys" / "vps01"
+        assert kf.read_text().startswith("PRIVKEYDATA")
+        assert oct(kf.stat().st_mode)[-3:] == "600"
+    finally:
+        storage.delete_project(p.project_id)

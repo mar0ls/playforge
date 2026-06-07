@@ -14,14 +14,17 @@
   .chat-input textarea { flex: 1; resize: vertical; }
 </style>
 
-<section x-data="assistant()" x-init="init()">
+<!-- The full assistant page shares ONE conversation with the slide-out dock via the
+     global Alpine `chat` store (defined in base.html): same messages, same agent
+     controls, persisted across refreshes. This page is just the roomy view of it. -->
+<section x-data x-init="$store.chat.init()">
   <div class="card">
     <div class="card-header">
       <h3>✨ Assistant</h3>
-      <span class="text-xs muted" x-show="model">via <span x-text="provider"></span> · <span class="font-mono" x-text="model"></span></span>
+      <span class="text-xs muted" x-show="$store.chat.model">via <span x-text="$store.chat.provider"></span> · <span class="font-mono" x-text="$store.chat.model"></span></span>
     </div>
 
-    <template x-if="aiEnabled === false">
+    <template x-if="$store.chat.aiEnabled === false">
       <div class="empty-state">
         <i class="icon" data-lucide="sparkles"></i>
         <p>AI is not configured yet.</p>
@@ -29,33 +32,89 @@
       </div>
     </template>
 
-    <template x-if="aiEnabled === true">
+    <template x-if="$store.chat.aiEnabled !== false">
       <div class="chat">
-        <div class="chat-log" x-ref="log">
-          <template x-if="messages.length === 0">
+        <div class="row gap-md" style="align-items:center; flex-wrap:wrap; margin-bottom:.5rem;">
+          <div class="view-toggle">
+            <button :class="{active: $store.chat.mode==='chat'}" @click="$store.chat.mode='chat'; $store.chat.persist()">💬 Chat</button>
+            <button :class="{active: $store.chat.mode==='agent'}" @click="$store.chat.mode='agent'; $store.chat.persist()">🤖 Agent</button>
+          </div>
+          <template x-if="$store.chat.mode==='agent'">
+            <div class="row gap-md" style="align-items:center; flex-wrap:wrap;">
+              <label class="row gap-xs" style="align-items:center;">project
+                <select x-model="$store.chat.agentProject" @change="$store.chat.persist()">
+                  <option value="">— pick —</option>
+                  <template x-for="p in $store.chat.projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+                </select>
+              </label>
+              <label class="row gap-xs" style="align-items:center;" title="Let the agent create/edit/move files and add collections">
+                <input type="checkbox" x-model="$store.chat.allowMutate" @change="$store.chat.persist()"> allow changes
+              </label>
+              <label class="row gap-xs" style="align-items:center;" title="Let it delete files and fetch docs from the web">
+                <input type="checkbox" x-model="$store.chat.allowConfirm" @change="$store.chat.persist()"> allow delete / web
+              </label>
+            </div>
+          </template>
+        </div>
+        <p class="text-xs muted" x-show="$store.chat.mode==='agent'" style="margin:-.25rem 0 .5rem;">
+          The agent inspects and (if allowed) changes the project through tools — every change is a separate git commit you can revert.
+        </p>
+        <div class="chat-log">
+          <template x-if="$store.chat.messages.length === 0">
             <div class="empty-state">
               <i class="icon" data-lucide="sparkles"></i>
               <h2 style="margin:0.5rem 0;">Tell me what you want to do</h2>
               <p class="muted">Generate a playbook, fix an error, or ask anything about Ansible.</p>
               <div class="row wrap gap-sm mt-2" style="justify-content:center;">
-                <template x-for="ex in examples" :key="ex">
-                  <button class="btn-secondary btn-sm" @click="input = ex; send()" x-text="ex"></button>
+                <template x-for="ex in $store.chat.examples" :key="ex">
+                  <button class="btn-secondary btn-sm" @click="$store.chat.input = ex; $store.chat.submit()" x-text="ex"></button>
                 </template>
               </div>
             </div>
           </template>
 
-          <template x-for="(m, i) in messages" :key="i">
+          <template x-for="(m, i) in $store.chat.messages" :key="i">
             <div :class="`msg ${m.role}`">
-              <div class="msg-role" x-text="m.role === 'user' ? 'You' : 'Assistant'"></div>
-              <template x-for="(seg, j) in segments(m.content)" :key="j">
+              <div class="msg-role" x-text="m.role === 'user' ? 'You' : (m.agent ? 'Agent' : 'Assistant')"></div>
+              <template x-if="m.steps && m.steps.length">
+                <div class="text-xs" style="margin-bottom:.4rem;">
+                  <div style="font-weight:600;">🤖 Actions (<span x-text="m.steps.length"></span>):</div>
+                  <template x-for="(st, si) in m.steps" :key="si">
+                    <div style="border-left:2px solid var(--border,#30363d); padding:.15rem .5rem; margin:.2rem 0;">
+                      <code x-text="st.tool"></code>
+                      <span class="muted" x-text="st.args && Object.keys(st.args).length ? ' ' + JSON.stringify(st.args).slice(0,80) : ''"></span>
+                      <span x-show="st.observation && st.observation.error" style="color:var(--fail);" x-text="' → ' + (st.observation && st.observation.error)"></span>
+                      <span x-show="st.observation && (st.observation.saved || st.observation.to || st.observation.created || st.observation.deleted)" style="color:var(--ok,#3fb950);"> ✓</span>
+                    </div>
+                  </template>
+                  <div x-show="m.stoppedReason" class="muted" x-text="'stopped: ' + m.stoppedReason"></div>
+                </div>
+              </template>
+              <template x-if="m.warnings && m.warnings.length">
+                <div class="text-xs mt-1" style="border:1px solid var(--warn,#d29922); border-radius:6px; padding:.4rem .6rem;">
+                  <strong style="color:var(--warn,#d29922);">🛡️ Safety check (validated automatically):</strong>
+                  <ul style="padding-left:1.25rem; margin:.25rem 0;">
+                    <template x-for="w in m.warnings" :key="w"><li x-text="w"></li></template>
+                  </ul>
+                </div>
+              </template>
+              <template x-if="m.needed && m.needed.length && m.goal">
+                <div class="row gap-sm" style="margin:.4rem 0; align-items:center;">
+                  <button class="btn btn-sm" @click="$store.chat.enableAndRetry(m)">
+                    <i class="icon" data-lucide="unlock"></i>
+                    <span x-text="m.needed.includes('confirm') ? 'Enable delete/web & retry' : 'Enable changes & retry'"></span>
+                  </button>
+                  <span class="text-xs muted">The agent needed a permission that was off.</span>
+                </div>
+              </template>
+              <template x-for="(seg, j) in $store.chat.segments(m.content)" :key="j">
                 <div>
                   <template x-if="seg.type === 'code'">
                     <div>
                       <pre class="log" style="margin:0.4rem 0;" x-text="seg.text"></pre>
                       <div class="row gap-sm" style="margin:-0.2rem 0 0.4rem;">
-                        <button class="btn-ghost btn-sm" @click="copy(seg.text)"><i class="icon" data-lucide="copy"></i> Copy</button>
-                        <button class="btn-ghost btn-sm" @click="openSave(seg.text)"><i class="icon" data-lucide="save"></i> Save to project…</button>
+                        <button class="btn-ghost btn-sm" @click="$store.chat.copy(seg.text)"><i class="icon" data-lucide="copy"></i> Copy</button>
+                        <button class="btn-ghost btn-sm" @click="$store.chat.openSave(seg.text)"><i class="icon" data-lucide="save"></i> Save to project…</button>
                       </div>
                     </div>
                   </template>
@@ -67,7 +126,7 @@
                 <div class="mt-1" style="border-top:1px solid var(--border,#30363d); padding-top:0.4rem;">
                   <div class="row between" style="align-items:center;">
                     <strong class="text-sm">📁 Files (<span x-text="m.files.length"></span>)</strong>
-                    <button class="btn-sm" @click="saveAllFiles(m.files)" :disabled="!projects.length">
+                    <button class="btn-sm" @click="$store.chat.saveAllFiles(m.files)" :disabled="!$store.chat.projects.length">
                       <i class="icon" data-lucide="save"></i> Save all to project
                     </button>
                   </div>
@@ -76,14 +135,14 @@
                       <div class="row between" style="align-items:center;">
                         <code class="text-sm" x-text="f.path"></code>
                         <div class="row gap-sm">
-                          <button class="btn-ghost btn-sm" @click="copy(f.content)">Copy</button>
-                          <button class="btn-ghost btn-sm" @click="openSave(f.content, f.path)">Save…</button>
+                          <button class="btn-ghost btn-sm" @click="$store.chat.copy(f.content)">Copy</button>
+                          <button class="btn-ghost btn-sm" @click="$store.chat.openSave(f.content, f.path)">Save…</button>
                         </div>
                       </div>
                       <pre class="log" style="margin:0.3rem 0 0; max-height:14rem;" x-text="f.content"></pre>
                     </div>
                   </template>
-                  <span class="text-xs" :class="saveMsgClass" x-text="saveMsg"></span>
+                  <span class="text-xs" :class="$store.chat.saveMsgClass" x-text="$store.chat.saveMsg"></span>
                 </div>
               </template>
 
@@ -113,158 +172,51 @@
             </div>
           </template>
 
-          <div class="msg assistant" x-show="busy">
-            <div class="msg-role">Assistant</div>
-            <div class="muted">thinking…</div>
+          <div class="msg assistant" x-show="$store.chat.busy">
+            <div class="msg-role" x-text="$store.chat.mode==='agent' ? 'Agent' : 'Assistant'"></div>
+            <div class="muted" x-text="$store.chat.mode==='agent' ? 'working…' : 'thinking…'"></div>
           </div>
         </div>
 
-        <div class="card" x-show="saveDialog" x-cloak style="border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.05);">
+        <div class="card" x-show="$store.chat.saveDialog" x-cloak style="border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.05);">
           <h4>Save snippet to a project</h4>
-          <template x-if="projects.length === 0">
+          <template x-if="$store.chat.projects.length === 0">
             <p class="text-sm muted">No projects yet — create one first, then come back.</p>
           </template>
-          <div class="form-row" x-show="projects.length">
+          <div class="form-row" x-show="$store.chat.projects.length">
             <label>Project
-              <select x-model="saveDialog.project">
-                <template x-for="p in projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+              <select x-model="$store.chat.saveDialog.project">
+                <template x-for="p in $store.chat.projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
               </select>
             </label>
             <label>Path
-              <input type="text" x-model="saveDialog.path" placeholder="playbooks/from-assistant.yml">
+              <input type="text" x-model="$store.chat.saveDialog.path" placeholder="playbooks/from-assistant.yml">
             </label>
           </div>
           <div class="row gap-sm mt-1">
-            <button @click="saveSnippet()" :disabled="saving || !saveDialog.project || !saveDialog.path"
-                    x-show="projects.length">
-              <span x-text="saving ? 'Saving…' : 'Save'"></span>
+            <button @click="$store.chat.saveSnippet()" :disabled="$store.chat.saving || !$store.chat.saveDialog.project || !$store.chat.saveDialog.path"
+                    x-show="$store.chat.projects.length">
+              <span x-text="$store.chat.saving ? 'Saving…' : 'Save'"></span>
             </button>
-            <button class="btn-secondary" @click="saveDialog = null">Cancel</button>
-            <span class="text-sm" :class="saveMsgClass" x-text="saveMsg"></span>
+            <button class="btn-secondary" @click="$store.chat.saveDialog = null">Cancel</button>
+            <span class="text-sm" :class="$store.chat.saveMsgClass" x-text="$store.chat.saveMsg"></span>
           </div>
         </div>
 
-        <form class="chat-input" @submit.prevent="send()">
-          <textarea x-model="input" rows="2"
-                    placeholder="Describe what you want to do…  (Enter to send, Shift+Enter for a new line)"
-                    @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); send(); }"></textarea>
-          <button type="submit" :disabled="busy || !input.trim()">
+        <form class="chat-input" @submit.prevent="$store.chat.submit()">
+          <textarea x-model="$store.chat.input" rows="2"
+                    :placeholder="$store.chat.mode==='agent' ? 'Tell the agent what to do on the project…' : 'Describe what you want to do…  (Enter to send, Shift+Enter for a new line)'"
+                    @input.debounce.600ms="$store.chat.persist()"
+                    @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); $store.chat.submit(); }"></textarea>
+          <button type="submit" :disabled="$store.chat.busy || !$store.chat.input.trim()">
             <i class="icon" data-lucide="send"></i>
           </button>
         </form>
         <div class="row gap-sm">
-          <button class="btn-ghost btn-sm" @click="messages = []" x-show="messages.length">Clear chat</button>
+          <button class="btn-ghost btn-sm" @click="$store.chat.clear()" x-show="$store.chat.messages.length">Clear chat</button>
         </div>
       </div>
     </template>
   </div>
 </section>
-
-<script>
-function assistant() {
-  return {
-    aiEnabled: null, provider: "", model: "", messages: [], input: "", busy: false,
-    projects: [], saveDialog: null, saving: false, saveMsg: "", saveMsgClass: "muted",
-    examples: [
-      "Write a playbook to install and start nginx on Debian hosts",
-      "How do I loop over a list of users with the user module?",
-      "Why might a task report 'unreachable' and how do I fix it?",
-    ],
-    async init() {
-      const s = await fetch("/api/ai/status").then(r => r.ok ? r.json() : {enabled: false});
-      this.aiEnabled = !!s.enabled; this.provider = s.provider || ""; this.model = s.model || "";
-      this.projects = await fetch("/api/projects").then(r => r.ok ? r.json() : []).catch(() => []);
-      this.$nextTick(() => lucide.createIcons());
-    },
-    segments(content) {
-      // Split on ``` fences: odd segments are code blocks.
-      const out = []; const parts = (content || "").split("```");
-      parts.forEach((p, idx) => {
-        if (idx % 2 === 1) out.push({type: "code", text: p.replace(/^[a-zA-Z0-9_-]*\n/, "")});
-        else if (p.trim()) out.push({type: "text", text: p.trim()});
-      });
-      return out.length ? out : [{type: "text", text: content || ""}];
-    },
-    async send() {
-      const text = this.input.trim();
-      if (!text || this.busy) return;
-      this.messages.push({role: "user", content: text});
-      this.input = ""; this.busy = true; this.scroll();
-      try {
-        const r = await fetch("/api/ai/chat", {
-          method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({messages: this.messages.map(m => ({role: m.role, content: m.content}))}),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this.messages.push({role: "assistant", content: "⚠️ " + (d.detail || "request failed")});
-          return;
-        }
-        this.messages.push({
-          role: "assistant", content: d.reply || "(empty response)",
-          invalid_modules: (d.validation && d.validation.invalid_modules) || [],
-          uninstalled_modules: (d.validation && d.validation.uninstalled_modules) || [],
-          playbook_issues: (d.validation && d.validation.playbook_issues) || [],
-          files: d.files || [],
-        });
-        this.provider = d.provider || this.provider; this.model = d.model || this.model;
-      } finally {
-        this.busy = false;
-        this.$nextTick(() => { lucide.createIcons(); this.scroll(); });
-      }
-    },
-    scroll() {
-      this.$nextTick(() => { const l = this.$refs.log; if (l) l.scrollTop = l.scrollHeight; });
-    },
-    copy(text) {
-      // navigator.clipboard needs a secure context; fall back to execCommand on plain http.
-      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text); return; }
-      const ta = document.createElement("textarea");
-      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-      document.body.appendChild(ta); ta.select();
-      try { document.execCommand("copy"); } catch (e) { /* ignore */ }
-      document.body.removeChild(ta);
-    },
-    openSave(content, suggestedPath) {
-      this.saveMsg = "";
-      this.saveDialog = {
-        content, project: (this.projects[0] && this.projects[0].id) || "",
-        path: suggestedPath || "playbooks/from-assistant.yml",
-      };
-    },
-    async saveSnippet() {
-      if (!this.saveDialog || this.saving) return;
-      this.saving = true; this.saveMsg = "";
-      try {
-        const r = await fetch(`/api/projects/${this.saveDialog.project}/file`, {
-          method: "PUT", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({path: this.saveDialog.path, content: this.saveDialog.content,
-                                message: "Add snippet from assistant"}),
-        });
-        if (!r.ok) { this.saveMsg = (await r.text()) || "save failed"; this.saveMsgClass = "err"; return; }
-        this.saveMsg = "Saved ✓"; this.saveMsgClass = "ok";
-        setTimeout(() => { this.saveDialog = null; }, 1200);
-      } finally { this.saving = false; }
-    },
-    async saveAllFiles(files) {
-      if (!files || !files.length) return;
-      const project = (this.projects[0] && this.projects[0].id) || "";
-      if (!project) { this.saveMsg = "No project to save into."; this.saveMsgClass = "err"; return; }
-      this.saveMsg = "Saving…"; this.saveMsgClass = "muted";
-      let ok = 0;
-      for (const f of files) {
-        try {
-          const r = await fetch(`/api/projects/${project}/file`, {
-            method: "PUT", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({path: f.path, content: f.content, message: `Add ${f.path} from assistant`}),
-          });
-          if (r.ok) ok++;
-        } catch (e) { /* keep going */ }
-      }
-      this.saveMsg = `Saved ${ok}/${files.length} file(s) to ${this.projects[0].name} ✓`;
-      this.saveMsgClass = ok === files.length ? "ok" : "err";
-    },
-  };
-}
-</script>
 {% endblock %}

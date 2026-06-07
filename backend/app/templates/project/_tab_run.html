@@ -1,0 +1,467 @@
+  <div x-show="tab === 'run'" x-cloak>
+    <div class="panel-grid aside">
+      <div class="card">
+        <div class="card-header">
+          <h3>Run parameters</h3>
+          <button class="btn-secondary btn-sm" @click="showSaveTpl = !showSaveTpl" :disabled="!runForm.playbook">
+            <i class="icon" data-lucide="bookmark-plus"></i> Save as template
+          </button>
+        </div>
+
+        <div class="row gap-sm" style="align-items: flex-end;">
+          <label style="flex: 1;">Environment
+            <select x-model.number="selectedEnvId" @change="applyEnvironment(selectedEnvId)">
+              <option value="0">— none —</option>
+              <template x-for="e in environments" :key="e.id">
+                <option :value="e.id" x-text="e.name"></option>
+              </template>
+            </select>
+          </label>
+          <button type="button" class="btn-secondary btn-sm" @click="showEnvMgr = !showEnvMgr">
+            <i class="icon" data-lucide="layers"></i> Manage
+          </button>
+        </div>
+
+        <div class="card" x-show="showEnvMgr" x-cloak style="background: var(--bg-elev-2); margin-bottom: 0.75rem;">
+          <h4>Environments</h4>
+          <template x-if="!environments.length">
+            <p class="muted text-sm">None yet. An environment pairs an inventory with a default credential.</p>
+          </template>
+          <template x-for="e in environments" :key="e.id">
+            <div class="row between" style="padding: 0.25rem 0;">
+              <span class="text-sm"><strong x-text="e.name"></strong>
+                <span class="muted font-mono text-xs" x-text="e.inventory_path || '(no inventory)'"></span></span>
+              <button type="button" class="btn-secondary btn-sm danger" @click="deleteEnvironment(e.id)">
+                <i class="icon" data-lucide="trash-2"></i></button>
+            </div>
+          </template>
+          <div class="form-row mt-1">
+            <label>Name
+              <input type="text" x-model="envForm.name" placeholder="production">
+            </label>
+            <label>Inventory
+              <select x-model="envForm.inventory_path">
+                <option value="">(none)</option>
+                <template x-for="inv in (detected.inventories || [])" :key="`env-${inv}`">
+                  <option :value="inv" x-text="inv"></option>
+                </template>
+              </select>
+            </label>
+          </div>
+          <label>Default credential
+            <select x-model.number="envForm.default_credential_id">
+              <option value="0">— none —</option>
+              <template x-for="c in allCreds" :key="`envc-${c.id}`">
+                <option :value="c.id" x-text="`${c.kind}: ${c.name}`"></option>
+              </template>
+            </select>
+          </label>
+          <button type="button" class="btn-sm mt-1" @click="saveEnvironment()" :disabled="!envForm.name.trim()">
+            <i class="icon" data-lucide="plus"></i> Add environment
+          </button>
+        </div>
+
+        <template x-if="templates.length">
+          <label>Load from template
+            <select @change="loadTemplate($event.target.value)">
+              <option value="">— start from scratch —</option>
+              <template x-for="t in templates" :key="t.id">
+                <option :value="t.id" x-text="t.name"></option>
+              </template>
+            </select>
+          </label>
+        </template>
+
+        <div class="card" x-show="showSaveTpl" x-cloak style="background: var(--bg-elev-2); margin-bottom: 0.75rem;">
+          <h4>Save current parameters as a template</h4>
+          <label>Template name
+            <input type="text" x-model="saveTpl.name" placeholder="deploy-prod" required>
+          </label>
+          <label>Description (optional)
+            <input type="text" x-model="saveTpl.description">
+          </label>
+          <div class="row gap-sm">
+            <button @click="saveAsTemplate()" :disabled="!saveTpl.name">Save</button>
+            <button class="btn-secondary" @click="showSaveTpl = false">Cancel</button>
+          </div>
+        </div>
+
+        <form @submit.prevent="runPlaybook()">
+          <label>Playbook
+            <select x-model="runForm.playbook" required @change="loadTags()">
+              <option value="">— pick a playbook —</option>
+              <template x-for="pb in (detected.playbooks || [])" :key="pb">
+                <option :value="pb" x-text="pb"></option>
+              </template>
+            </select>
+          </label>
+          <label>Inventory
+            <select x-model="runForm.inventory" @change="loadInventoryHosts()">
+              <option value="">(default from ansible.cfg)</option>
+              <template x-for="inv in (detected.inventories || [])" :key="inv">
+                <option :value="inv" x-text="inv"></option>
+              </template>
+            </select>
+          </label>
+          <label>Tags
+            <template x-if="availableTags.length">
+              <div class="row wrap gap-sm mb-1">
+                <template x-for="t in availableTags" :key="t">
+                  <button type="button" class="tag-chip"
+                          :class="{active: selectedTags.includes(t)}"
+                          @click="toggleTag(t)" x-text="t"></button>
+                </template>
+              </div>
+            </template>
+            <template x-if="!availableTags.length && runForm.playbook">
+              <div class="text-xs muted mb-1">No tags found in this playbook — type them manually below if needed.</div>
+            </template>
+            <input type="text" x-model="customTagsRaw"
+                   :placeholder="availableTags.length ? 'or add custom tags (comma-separated)' : 'tags (comma-separated)'">
+          </label>
+          <label x-show="availableTags.length">
+            Skip tags
+            <div class="row wrap gap-sm">
+              <template x-for="t in availableTags" :key="`skip-${t}`">
+                <button type="button" class="tag-chip skip"
+                        :class="{active: selectedSkipTags.includes(t)}"
+                        @click="toggleSkipTag(t)" x-text="t"></button>
+              </template>
+            </div>
+          </label>
+          <label>Limit (host pattern)
+            <input type="text" x-model="runForm.limit" list="inv-targets" placeholder="webservers, web01.example.com">
+            <datalist id="inv-targets">
+              <template x-for="g in Object.keys(invData.groups || {})" :key="g">
+                <option :value="g"></option>
+              </template>
+              <template x-for="h in (invData.hosts || [])" :key="h">
+                <option :value="h"></option>
+              </template>
+            </datalist>
+          </label>
+          <template x-if="(invData.hosts || []).length || Object.keys(invData.groups || {}).length">
+            <div class="mb-2">
+              <div class="row gap-sm" style="margin-bottom: 0.3rem; align-items: baseline;">
+                <span class="text-xs muted">Click to add/remove from --limit (Ansible <code>:</code>-separated):</span>
+                <button type="button" class="btn-ghost btn-sm" @click="runForm.limit = ''"
+                        x-show="runForm.limit">Clear</button>
+              </div>
+              <div class="row wrap gap-sm">
+                <template x-for="g in Object.keys(invData.groups || {})" :key="`g-${g}`">
+                  <button type="button" class="btn-secondary btn-sm"
+                          :class="{active: limitContains(g)}"
+                          @click="toggleLimit(g)" x-text="g"></button>
+                </template>
+                <template x-for="h in (invData.hosts || [])" :key="`h-${h}`">
+                  <button type="button" class="btn-ghost btn-sm font-mono"
+                          :class="{active: limitContains(h)}"
+                          @click="toggleLimit(h)" x-text="h"></button>
+                </template>
+              </div>
+            </div>
+          </template>
+          <template x-if="sshCreds.length">
+            <label>SSH credential (optional)
+              <select x-model.number="selectedCredentialId">
+                <option :value="0">— none (use defaults) —</option>
+                <template x-for="c in sshCreds" :key="c.id">
+                  <option :value="c.id" x-text="c.name + (c.description ? ' — ' + c.description : '')"></option>
+                </template>
+              </select>
+            </label>
+          </template>
+          <template x-if="becomeCreds.length">
+            <label>Become (sudo) password (optional)
+              <select x-model.number="selectedBecomeId">
+                <option :value="0">— none —</option>
+                <template x-for="c in becomeCreds" :key="c.id">
+                  <option :value="c.id" x-text="c.name"></option>
+                </template>
+              </select>
+            </label>
+          </template>
+          <template x-if="wireguardCreds.length">
+            <label>WireGuard keys (optional, exposed as <code>wireguard_keys</code>)
+              <div class="row wrap gap-xs">
+                <template x-for="c in wireguardCreds" :key="c.id">
+                  <label class="row gap-xs" style="align-items:center;">
+                    <input type="checkbox" :value="c.id" x-model.number="selectedWireguardIds"> <span x-text="c.name"></span>
+                  </label>
+                </template>
+              </div>
+            </label>
+          </template>
+
+          <label>Verbosity
+            <select x-model.number="runForm.verbosity">
+              <option :value="0">0 — quiet</option>
+              <option :value="1">1 — -v (per-task output)</option>
+              <option :value="2">2 — -vv (module info)</option>
+              <option :value="3">3 — -vvv (connection debug)</option>
+              <option :value="4">4 — -vvvv (full debug)</option>
+            </select>
+          </label>
+
+          <div class="checkbox-row"><input type="checkbox" id="cm" x-model="runForm.checkMode"><label for="cm" style="margin:0; display:inline;">--check (dry run)</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="sx" x-model="runForm.syntaxOnly"><label for="sx" style="margin:0; display:inline;">--syntax-check</label></div>
+          <div class="row gap-sm mt-2">
+            <button type="submit" :disabled="running"><i class="icon" data-lucide="play"></i> Run</button>
+            <button type="button" class="btn-secondary" @click="previewRun()" :disabled="running || previewing || !runForm.playbook">
+              <i class="icon" data-lucide="eye"></i>
+              <span x-text="previewing ? 'Previewing…' : 'Preview (dry-run)'"></span>
+            </button>
+            <button type="button" class="btn-secondary" @click="ping()" :disabled="running"><i class="icon" data-lucide="radio"></i> Ping all</button>
+            <button type="button" class="btn-secondary" @click="adhoc.open = !adhoc.open" :disabled="running">
+              <i class="icon" data-lucide="terminal-square"></i> Ad-hoc command
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card" x-show="adhoc.open" x-cloak>
+        <div class="card-header">
+          <h3>Ad-hoc command</h3>
+          <div class="text-xs muted">One-shot module call against an inventory pattern. No playbook needed.</div>
+        </div>
+        <div class="form-row">
+          <label>Hosts (pattern)
+            <input type="text" x-model="adhoc.host_pattern" list="adhoc-targets" placeholder="all / webservers / web01">
+            <datalist id="adhoc-targets">
+              <template x-for="g in Object.keys(invData.groups || {})" :key="`a-g-${g}`"><option :value="g"></option></template>
+              <template x-for="h in (invData.hosts || [])" :key="`a-h-${h}`"><option :value="h"></option></template>
+            </datalist>
+          </label>
+          <label>Module
+            <input type="text" x-model="adhoc.module" list="adhoc-modules" placeholder="ping">
+            <datalist id="adhoc-modules">
+              <option value="ping"></option>
+              <option value="command"></option>
+              <option value="shell"></option>
+              <option value="setup"></option>
+              <option value="copy"></option>
+              <option value="file"></option>
+              <option value="lineinfile"></option>
+              <option value="service"></option>
+              <option value="apt"></option>
+              <option value="yum"></option>
+              <option value="dnf"></option>
+              <option value="package"></option>
+              <option value="user"></option>
+              <option value="get_url"></option>
+              <option value="uri"></option>
+            </datalist>
+          </label>
+        </div>
+        <label>Args (Ansible <code>key=value</code> string, or a free-form command for <code>shell</code>/<code>command</code>)
+          <input type="text" x-model="adhoc.args"
+                 placeholder="msg=hello  /  name=nginx state=present  /  uptime">
+        </label>
+        <p class="text-xs muted">Examples:
+          <code>setup</code> (no args) — gather facts ·
+          <code>command</code> <code>args=uptime</code> ·
+          <code>service</code> <code>args=name=nginx state=restarted</code></p>
+        <div class="row gap-sm mt-1">
+          <button class="btn-sm" @click="runAdhoc()" :disabled="adhoc.busy || !adhoc.module.trim()">
+            <i class="icon" data-lucide="play"></i>
+            <span x-text="adhoc.busy ? 'Running…' : 'Run ad-hoc'"></span>
+          </button>
+          <button class="btn-secondary btn-sm" @click="adhoc.open = false">Close</button>
+          <span class="text-sm" style="color: var(--fail);" x-show="adhoc.error" x-text="adhoc.error"></span>
+        </div>
+        <template x-if="adhoc.result">
+          <div class="mt-2">
+            <div class="row gap-sm">
+              <span :class="`badge ${adhoc.result.overall === 'ok' ? 'ok' : 'fail'}`"
+                    x-text="(adhoc.result.overall || adhoc.result.status || '?').toUpperCase()"></span>
+              <span class="text-xs muted" x-text="`rc=${adhoc.result.rc}`"></span>
+            </div>
+            <template x-if="adhoc.result.hosts && Object.keys(adhoc.result.hosts).length">
+              <table class="mt-1">
+                <thead><tr><th>Host</th><th>ok</th><th>changed</th><th>failures</th><th>unreachable</th></tr></thead>
+                <tbody>
+                  <template x-for="(s, h) in adhoc.result.hosts" :key="h">
+                    <tr><td x-text="h"></td><td x-text="s.ok || 0"></td><td x-text="s.changed || 0"></td>
+                        <td x-text="s.failures || 0"></td><td x-text="s.unreachable || 0"></td></tr>
+                  </template>
+                </tbody>
+              </table>
+            </template>
+            <template x-if="adhoc.result.failures && adhoc.result.failures.length">
+              <pre class="log mt-1" x-text="adhoc.result.failures.map(f => `${f.host || '?'}: ${(f.result && f.result.msg) || JSON.stringify(f.result)}`).join('\n')"></pre>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div class="card" x-show="preview" x-cloak>
+        <div class="card-header">
+          <h3>Preview — what would change</h3>
+          <button class="btn-secondary btn-sm" x-show="aiEnabled" @click="narratePlan()" :disabled="narrating">
+            <i class="icon" data-lucide="sparkles"></i>
+            <span x-text="narrating ? 'Asking…' : 'Explain (AI)'"></span>
+          </button>
+        </div>
+        <template x-if="preview && !preview.changes.length && !(preview.failures && preview.failures.length)">
+          <p class="text-sm" style="color: var(--ok,#3fb950);">✓ No changes — hosts already match the desired state (no drift).</p>
+        </template>
+        <template x-if="preview && preview.changes.length">
+          <div>
+            <p class="text-sm muted" x-text="`${preview.changes.length} task(s) would change:`"></p>
+            <table>
+              <thead><tr><th>Host</th><th>Task</th></tr></thead>
+              <tbody>
+                <template x-for="(c, i) in preview.changes" :key="i">
+                  <tr><td class="font-mono text-xs" x-text="c.host || '?'"></td><td class="text-sm" x-text="c.task || ''"></td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
+        <template x-if="preview && preview.failures && preview.failures.length">
+          <p class="text-sm" style="color: var(--fail,#f85149);">⚠️ Preview hit errors (e.g. unreachable host or a task that can't run in check mode): <span x-text="preview.failures.length"></span></p>
+        </template>
+        <div class="card mt-2" x-show="planNarration" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
+          <div class="row gap-sm" style="align-items: baseline;"><i class="icon" data-lucide="sparkles"></i><strong>AI summary</strong></div>
+          <p class="text-sm" style="white-space: pre-wrap;" x-text="planNarration"></p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Output</h3>
+          <div class="row gap-sm">
+            <div class="view-toggle">
+              <button :class="{active: !showRaw}" @click="showRaw = false">Tasks</button>
+              <button :class="{active: showRaw}" @click="showRaw = true">Raw</button>
+            </div>
+            <button class="btn-secondary btn-sm danger" x-show="running" @click="cancelRun()">
+              <i class="icon" data-lucide="square"></i> Cancel
+            </button>
+            <span x-show="running" class="badge run"><span class="dot run"></span> RUNNING</span>
+            <span x-show="summary" :class="`badge ${summaryBadgeClass()}`"
+                  x-text="summaryBadgeLabel()"></span>
+          </div>
+        </div>
+
+        <template x-if="!running && !logLines.length && !plays.length && !summary">
+          <div class="empty-state"><i class="icon" data-lucide="terminal"></i><p>Run output will appear here.</p></div>
+        </template>
+
+        <!-- Structured view -->
+        <div x-show="!showRaw && (plays.length || running)">
+          <template x-for="play in plays" :key="play.id">
+            <div class="play-block">
+              <div class="play-header">PLAY [<span x-text="play.name || '(unnamed)'"></span>]</div>
+              <template x-for="task in play.tasks" :key="task.id">
+                <div class="task-row" :class="{open: task.open, 'has-fail': task.hasFail, 'has-change': task.hasChange}">
+                  <div class="task-line" @click="task.open = !task.open">
+                    <span x-text="task.open ? '▾' : '▸'" class="muted text-xs"></span>
+                    <span class="task-name" x-text="task.name || '(unnamed task)'"></span>
+                    <div class="task-chips">
+                      <template x-for="(s, host) in task.hosts" :key="host">
+                        <span class="host-chip" :class="`status-${s.status}`" :title="`${host}: ${s.status}`" x-text="host"></span>
+                      </template>
+                    </div>
+                  </div>
+                  <div x-show="task.open" x-cloak class="task-detail">
+                    <template x-for="(s, host) in task.hosts" :key="host">
+                      <div class="host-result">
+                        <div class="host-result-head">
+                          <span class="host-chip" :class="`status-${s.status}`" x-text="s.status"></span>
+                          <strong x-text="host"></strong>
+                        </div>
+                        <pre x-show="s.output" x-text="s.output"></pre>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Raw log fallback -->
+        <pre class="log" x-ref="log" x-show="showRaw && logLines.length" x-text="logLines.join('\n')"></pre>
+
+        <template x-if="summary">
+          <div class="mt-2">
+            <h4>Per-host stats</h4>
+            <table>
+              <thead><tr><th>Host</th><th>ok</th><th>changed</th><th>failures</th><th>unreachable</th><th>skipped</th></tr></thead>
+              <tbody>
+                <template x-for="(s, host) in summary.hosts" :key="host">
+                  <tr>
+                    <td x-text="host"></td>
+                    <td x-text="s.ok || 0"></td>
+                    <td x-text="s.changed || 0"></td>
+                    <td x-text="s.failures || 0"></td>
+                    <td x-text="s.unreachable || 0"></td>
+                    <td x-text="s.skipped || 0"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+
+            <template x-if="failedHosts().length">
+              <div class="mt-1">
+                <button @click="replayFailed()">
+                  <i class="icon" data-lucide="rotate-ccw"></i>
+                  <span x-text="`Replay ${failedHosts().length} failed host(s)`"></span>
+                </button>
+              </div>
+            </template>
+
+            <template x-if="summary.failures.length">
+              <div class="mt-2">
+                <h4>Failures</h4>
+                <template x-for="(f, i) in summary.failures" :key="i">
+                  <div class="card" style="background:#1a0f12; border-color:#3d1d1d;">
+                    <div class="row between">
+                      <strong x-text="`${f.host || '?'} — ${f.task || ''}`"></strong>
+                      <button class="btn-secondary btn-sm" x-show="aiEnabled"
+                              @click="explainFailure(i, f)" :disabled="aiBusy[i]">
+                        <i class="icon" data-lucide="sparkles"></i>
+                        <span x-text="aiBusy[i] ? 'Asking…' : 'Explain (AI)'"></span>
+                      </button>
+                    </div>
+                    <pre class="log" x-text="(f.result && f.result.msg) || JSON.stringify(f.result, null, 2)"></pre>
+                    <template x-if="aiExplain[i]">
+                      <div class="card mt-1" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
+                        <div class="row gap-sm" style="align-items: baseline;">
+                          <i class="icon" data-lucide="sparkles"></i>
+                          <strong>AI explanation</strong>
+                          <span class="muted text-xs" x-text="aiExplain[i].model"></span>
+                          <template x-if="aiExplain[i].validation">
+                            <span :class="`badge ${confidenceBadge(aiExplain[i].validation.confidence)}`"
+                                  x-text="`${aiExplain[i].validation.confidence || ''} confidence`"></span>
+                          </template>
+                        </div>
+                        <p class="text-sm" style="white-space: pre-wrap;" x-text="aiExplain[i].explanation"></p>
+                        <template x-if="aiExplain[i].validation && (aiExplain[i].validation.unknown_modules || []).length">
+                          <div class="text-xs mt-1" style="color: var(--warn);">
+                            ⚠️ Modules referenced but not installed in this container:
+                            <code x-text="aiExplain[i].validation.unknown_modules.join(', ')"></code>
+                          </div>
+                        </template>
+                        <template x-if="aiExplain[i].validation && aiExplain[i].validation.self_critique && (aiExplain[i].validation.self_critique.unsupported_claims || []).length">
+                          <div class="text-xs mt-1">
+                            <div style="color: var(--warn);">⚠️ Claims a second AI pass couldn't ground in the failure record:</div>
+                            <ul style="padding-left: 1.25rem; margin: 0.25rem 0;">
+                              <template x-for="c in aiExplain[i].validation.self_critique.unsupported_claims" :key="c">
+                                <li class="muted" x-text="c"></li>
+                              </template>
+                            </ul>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>

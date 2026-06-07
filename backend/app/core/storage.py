@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse, urlunparse
+import re
 import shutil
 import uuid
 
@@ -85,9 +86,11 @@ def create_project(name: str) -> ProjectPaths:
                 "group_vars", "host_vars", "roles", "playbooks"):
         (root / sub).mkdir(parents=True, exist_ok=True)
 
+    # Leave host_key_checking commented — scaffolding `= False` would silently
+    # disable MITM protection in every new project.
     (root / "ansible.cfg").write_text(
         "[defaults]\n"
-        "host_key_checking = False\n"
+        "# host_key_checking = False  # uncomment on disposable lab networks only\n"
         "inventory = inventories/production\n"
         "roles_path = roles\n"
         "stdout_callback = yaml\n"
@@ -173,13 +176,21 @@ def delete_project(project_id: str) -> None:
 
 
 def _resolve_safe(project_root: Path, relative: str) -> Path:
-    """Resolve a path inside a project, refusing escapes via .. or absolute paths."""
+    """Resolve a path inside a project, refusing escapes via .. or absolute paths,
+    and refusing any path inside the project's own `.git/` — writing there (a hook,
+    `core.hooksPath`/`fsmonitor` in config, corrupt refs) is a code-execution /
+    repo-integrity risk, since the app auto-commits on every change."""
     candidate = (project_root / relative).resolve()
     project_root_resolved = project_root.resolve()
     try:
-        candidate.relative_to(project_root_resolved)
+        rel = candidate.relative_to(project_root_resolved)
     except ValueError as exc:
         raise StorageError(f"path escapes project: {relative}") from exc
+    if candidate == project_root_resolved:
+        # empty / "." / "a/.." → the project root itself; never a valid target
+        raise StorageError(f"invalid path: {relative!r}")
+    if ".git" in rel.parts:
+        raise StorageError(f"path is inside .git (not allowed): {relative}")
     return candidate
 
 
@@ -210,21 +221,58 @@ def write_file(project_id: str, relative: str, content: str, message: str | None
         )
 
 
-def commit_all(project_id: str, message: str) -> list[str]:
+# Filename patterns that usually hold generated secrets (private keys, passwords).
+# Used by `commit_all(protect_secrets=True)` to keep them OUT of git history.
+_SECRET_PATTERNS = (
+    re.compile(r"(^|/)id_[a-z0-9_]+$", re.I),   # id_rsa, id_ed25519, id_ssh_rsa_foo
+    re.compile(r"\.(pem|key)$"),                # *.pem, *.key
+    re.compile(r"(^|/)[^/]*private[^/]*$", re.I),
+    re.compile(r"(^|/)wg[-_].*\.conf$"),        # wireguard configs
+    re.compile(r"(^|/)[^/]*\.ovpn$"),           # openvpn
+    re.compile(r"(^|/)(generated_passwords|secrets|vault_pass)\.ya?ml$", re.I),
+)
+
+
+def _looks_secret(path: str) -> bool:
+    return any(p.search(path) for p in _SECRET_PATTERNS)
+
+
+def commit_all(project_id: str, message: str, *, protect_secrets: bool = False) -> list[str]:
     """Stage and commit every working-tree change in the project, returning the
     list of changed paths. Used after a run so artifacts the playbook wrote into
     the repo (generated SSH keys, rendered configs, fetched files) are captured,
     versioned and visible in the Files tab instead of being invisible/ephemeral.
-    Returns [] if nothing changed."""
+
+    If `protect_secrets` is set, files that look like generated secrets (keys,
+    passwords, *.ovpn, wg*.conf, ...) are NOT committed: they're added to the
+    project's `.gitignore` instead, so they stay on disk but out of git history.
+    Returns the list of committed paths (excludes any protected secrets).
+    """
     pp = paths_for(project_id)
     repo = Repo(pp.root)
-    # Untracked + modified + deleted, excluding our own .git.
-    changed = [item.a_path or item.b_path
-               for item in repo.index.diff(None)]  # modified/deleted tracked
-    changed += repo.untracked_files
-    changed = sorted({c for c in changed if c and ".git" not in c.split("/")})
+    raw: list[str | None] = [item.a_path or item.b_path for item in repo.index.diff(None)]
+    raw += repo.untracked_files
+    changed = sorted({c for c in raw if c and ".git" not in c.split("/")})
     if not changed:
         return []
+
+    if protect_secrets:
+        secrets = [c for c in changed if _looks_secret(c)]
+        if secrets:
+            gi = pp.root / ".gitignore"
+            existing = gi.read_text().splitlines() if gi.is_file() else []
+            additions = [s for s in secrets if s not in existing]
+            if additions:
+                with gi.open("a") as fh:
+                    fh.write("\n# run-generated secrets (auto-protected)\n" + "\n".join(additions) + "\n")
+            # Make sure none of them get staged, even if already tracked.
+            for s in secrets:
+                try:
+                    repo.git.rm("--cached", "-f", "--ignore-unmatch", s)
+                except GitCommandError:
+                    pass
+            changed = [c for c in changed if c not in secrets]
+
     repo.git.add(A=True)
     if repo.is_dirty(index=True, working_tree=False, untracked_files=True):
         repo.index.commit(message, author=GIT_AUTHOR, committer=GIT_AUTHOR)
@@ -244,6 +292,59 @@ def delete_file(project_id: str, relative: str) -> None:
     repo = Repo(pp.root)
     repo.index.remove([rel], r=True, working_tree=False)
     repo.index.commit(f"Delete {rel}", author=GIT_AUTHOR, committer=GIT_AUTHOR)
+
+
+def move_path(project_id: str, src_rel: str, dst_rel: str, message: str | None = None) -> str:
+    """Rename or move a file/directory inside the project (like `git mv`).
+    Both paths are sandboxed; refuses to overwrite an existing destination or to
+    move a directory into itself. Returns the new in-repo relative path."""
+    pp = paths_for(project_id)
+    root = pp.root.resolve()
+    src = _resolve_safe(pp.root, src_rel)
+    dst = _resolve_safe(pp.root, dst_rel)
+    if not src.exists():
+        raise StorageError(f"source not found: {src_rel}")
+    if dst.exists():
+        raise StorageError(f"destination already exists: {dst_rel}")
+    # Block moving a directory inside itself (e.g. roles -> roles/sub).
+    if src.is_dir() and (dst == src or str(dst).startswith(str(src) + "/")):
+        raise StorageError("cannot move a directory into itself")
+
+    src_in = str(src.relative_to(root))
+    dst_in = str(dst.relative_to(root))
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    repo = Repo(pp.root)
+    # Use git mv so history follows the rename; fall back to a filesystem move for
+    # untracked files (git mv refuses those).
+    try:
+        repo.git.mv(src_in, dst_in)
+    except GitCommandError:
+        shutil.move(str(src), str(dst))
+        repo.git.add("-A")
+    if repo.is_dirty(index=True, working_tree=False, untracked_files=True):
+        repo.index.commit(message or f"Move {src_in} -> {dst_in}",
+                          author=GIT_AUTHOR, committer=GIT_AUTHOR)
+    return dst_in
+
+
+def create_dir(project_id: str, relative: str) -> str:
+    """Create a new directory inside the project. Git doesn't track empty dirs, so
+    we drop a `.gitkeep` and commit it. Returns the in-repo relative path."""
+    pp = paths_for(project_id)
+    root = pp.root.resolve()
+    target = _resolve_safe(pp.root, relative)
+    if target.exists():
+        raise StorageError(f"already exists: {relative}")
+    target.mkdir(parents=True)
+    keep = target / ".gitkeep"
+    keep.write_text("")
+    rel = str(keep.relative_to(root))
+    repo = Repo(pp.root)
+    repo.index.add([rel])
+    repo.index.commit(f"Create directory {target.relative_to(root)}",
+                      author=GIT_AUTHOR, committer=GIT_AUTHOR)
+    return str(target.relative_to(root))
 
 
 # ---- Git remote sync (push / pull) -----------------------------------------
@@ -294,7 +395,7 @@ def set_remote(project_id: str, url: str) -> None:
         raise StorageError("remote url is required")
     repo = Repo(paths_for(project_id).root)
     try:
-        repo.delete_remote("origin")
+        repo.delete_remote("origin")  # type: ignore[arg-type]  # GitPython accepts a name
     except Exception:
         pass
     repo.create_remote("origin", url)
@@ -339,6 +440,42 @@ def git_pull(project_id: str, username: str | None = None, token: str | None = N
         msg = (e.stderr or str(e)).replace(auth, remote_url)
         raise StorageError(f"pull failed: {msg.strip()}")
     return out.strip() or f"pulled {branch} from origin"
+
+
+def file_history(project_id: str, relative: str, limit: int = 30) -> list[dict]:
+    """Commits touching `relative`, newest first; [] when path is untracked."""
+    pp = paths_for(project_id)
+    _resolve_safe(pp.root, relative)
+    repo = Repo(pp.root)
+    try:
+        commits = list(repo.iter_commits(paths=relative, max_count=max(1, min(limit, 100))))
+    except GitCommandError:
+        return []
+    out: list[dict] = []
+    for c in commits:
+        msg = (c.message or "").strip().splitlines()
+        out.append({
+            "sha": c.hexsha,
+            "short_sha": c.hexsha[:8],
+            "message": msg[0] if msg else "",
+            "author": c.author.name or "",
+            "when": c.committed_datetime.isoformat(),
+        })
+    return out
+
+
+def file_at(project_id: str, relative: str, sha: str) -> str:
+    """Content of `relative` at `sha`. Raises StorageError if absent there."""
+    pp = paths_for(project_id)
+    _resolve_safe(pp.root, relative)
+    # Catch typos here — GitPython's error for a bad hex is opaque.
+    if not re.fullmatch(r"[0-9a-fA-F]{4,40}", sha or ""):
+        raise StorageError(f"invalid sha: {sha!r}")
+    repo = Repo(pp.root)
+    try:
+        return repo.git.show(f"{sha}:{relative}")
+    except GitCommandError as e:
+        raise StorageError(f"file not in {sha[:8]}: {e.stderr or e}".strip())
 
 
 def walk_files(project_id: str) -> Iterable[Path]:

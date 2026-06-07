@@ -1,0 +1,150 @@
+  <div x-show="tab === 'files'" x-cloak>
+    <div class="panel-grid aside">
+      <div class="card tree-card">
+        <div class="row between" style="align-items:center;">
+          <h3>Tree</h3>
+          <div class="row gap-xs">
+            <button class="btn-ghost btn-sm" @click="newFile()" title="New file"><i class="icon" data-lucide="file-plus"></i></button>
+            <button class="btn-ghost btn-sm" @click="newDir()" title="New folder"><i class="icon" data-lucide="folder-plus"></i></button>
+            <button class="btn-ghost btn-sm" @click="collapseAll()" title="Collapse all folders">▸</button>
+            <button class="btn-ghost btn-sm" @click="collapsedDirs = []" title="Expand all folders">▾</button>
+          </div>
+        </div>
+        <ul class="tree">
+          <template x-for="node in visibleTree()" :key="node.path">
+            <li :style="`margin-left:${node.depth * 0.8}rem`" class="tree-row">
+              <span x-show="node.isDir" class="dir" style="cursor:pointer; user-select:none;"
+                    @click="toggleDir(node.path)">
+                <span x-text="collapsedDirs.includes(node.path) ? '▸' : '▾'"></span>
+                <span x-text="node.name"></span>
+              </span>
+              <a x-show="!node.isDir" href="#"
+                 :class="{active: selected === node.path}"
+                 @click.prevent="openFile(node.path)" x-text="node.name"></a>
+              <span class="tree-actions">
+                <a href="#" @click.prevent="renamePath(node)" title="Rename / move">✎</a>
+                <a href="#" @click.prevent="deletePath(node)" title="Delete" style="color:var(--fail,#f85149);">✕</a>
+              </span>
+            </li>
+          </template>
+        </ul>
+        <p class="text-xs muted" x-show="!flatTree.length">Empty project — use New file / New folder above.</p>
+      </div>
+      <div>
+        <template x-if="!selected">
+          <div class="empty-state">
+            <i class="icon" data-lucide="file-code-2"></i>
+            <p>Pick a file from the tree to edit it.</p>
+          </div>
+        </template>
+        <div x-show="selected" x-cloak>
+          <div class="editor-toolbar">
+            <span class="file-name">
+              <span x-text="selected"></span>
+              <span class="dirty-dot" x-show="dirty" title="unsaved changes"></span>
+              <span class="badge" x-show="fileEncrypted" style="margin-left:.4rem;">🔒 vault</span>
+            </span>
+            <div class="right">
+              <!-- Vault controls: only when a vault_password credential exists -->
+              <template x-if="vaultCreds.length">
+                <span class="row gap-xs" style="align-items:center;">
+                  <select x-model.number="vaultCredId" class="btn-sm" title="Vault password credential"
+                          style="max-width:10rem;">
+                    <template x-for="c in vaultCreds" :key="c.id">
+                      <option :value="c.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                  <button class="btn-secondary btn-sm" x-show="!fileEncrypted"
+                          @click="vaultEncrypt()" :disabled="vaultBusy">
+                    <i class="icon" data-lucide="lock"></i> Encrypt
+                  </button>
+                  <button class="btn-secondary btn-sm" x-show="fileEncrypted"
+                          @click="vaultView()" :disabled="vaultBusy">
+                    <i class="icon" data-lucide="eye"></i> View
+                  </button>
+                  <button class="btn-secondary btn-sm" x-show="fileEncrypted"
+                          @click="vaultDecrypt()" :disabled="vaultBusy">
+                    <i class="icon" data-lucide="lock-open"></i> Decrypt
+                  </button>
+                </span>
+              </template>
+              <span class="badge run" x-show="linting"><span class="dot run"></span> Linting</span>
+              <button class="btn-secondary btn-sm" @click="toggleHistory()" :disabled="!selected" title="Commit history for this file">
+                <i class="icon" data-lucide="history"></i> History
+              </button>
+              <button class="btn-secondary btn-sm" @click="runLint()" :disabled="linting || !selected">
+                <i class="icon" data-lucide="shield-check"></i> Lint
+              </button>
+              <button class="btn-sm" @click="saveFile()" :disabled="!dirty || saving">
+                <i class="icon" data-lucide="save"></i>
+                <span x-text="saving ? 'Saving…' : 'Save'"></span>
+              </button>
+            </div>
+          </div>
+          <div class="monaco-frame" x-ref="editor"></div>
+
+          <div class="lint-panel" x-show="history.open" x-cloak>
+            <h4>
+              <i class="icon" data-lucide="history"></i>
+              <span>History (most recent first)</span>
+              <button class="btn-secondary btn-sm" @click="history.open = false" style="margin-left:auto;">Close</button>
+            </h4>
+            <template x-if="!history.commits.length">
+              <div class="text-sm muted">No commits touch this path yet.</div>
+            </template>
+            <ul class="tree">
+              <template x-for="c in history.commits" :key="c.sha">
+                <li class="row gap-sm" style="align-items: baseline;">
+                  <code class="text-xs" x-text="c.short_sha"></code>
+                  <span class="text-sm" x-text="c.message"></span>
+                  <span class="text-xs muted" x-text="new Date(c.when).toLocaleString()"></span>
+                  <button class="btn-ghost btn-sm" @click="viewVersion(c.sha)">View</button>
+                </li>
+              </template>
+            </ul>
+            <template x-if="history.viewing">
+              <div class="mt-2">
+                <div class="text-xs muted">
+                  Showing <code x-text="history.viewing.sha.slice(0,8)"></code>
+                  <button class="btn-ghost btn-sm" @click="restoreVersion()">Restore into editor (then Save)</button>
+                </div>
+                <pre class="log" style="max-height: 14rem;" x-text="history.viewing.content"></pre>
+              </div>
+            </template>
+          </div>
+
+          <div class="lint-panel" x-show="vaultPlaintext">
+            <h4>
+              <i class="icon" data-lucide="eye"></i>
+              <span>Decrypted view (not saved to disk)</span>
+              <button class="btn-secondary btn-sm" @click="vaultPlaintext = ''" style="margin-left:auto;">Hide</button>
+            </h4>
+            <pre class="log" x-text="vaultPlaintext"></pre>
+          </div>
+
+          <div class="lint-panel" x-show="lintIssues.length || lintError">
+            <h4>
+              <i class="icon" data-lucide="shield-alert"></i>
+              <span>Lint issues</span>
+              <span class="badge muted" x-text="lintIssues.length"></span>
+            </h4>
+            <template x-if="lintError">
+              <div class="lint-issue severity-error">
+                <span class="rule">lint-error</span>
+                <span class="desc" x-text="lintError"></span>
+                <span></span>
+              </div>
+            </template>
+            <template x-for="(it, i) in lintIssues" :key="i">
+              <div class="lint-issue" :class="`severity-${it.monaco_severity}`"
+                   @click="jumpTo(it.line, it.column)" style="cursor:pointer;">
+                <span class="rule" x-text="it.rule"></span>
+                <span class="desc" x-text="it.description"></span>
+                <span class="loc" x-text="`L${it.line}:${it.column}`"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>

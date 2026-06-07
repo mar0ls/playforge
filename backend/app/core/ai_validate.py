@@ -106,9 +106,9 @@ def validate_text(text: str) -> dict:
     # / filenames / dotted var access (`server.example.com`, `certs.tar.gz`,
     # `result.stat.exists`) that the `a.b.c` shape would otherwise catch.
     candidates = set()
-    for m in _FQ_MODULE_RE.finditer(text):
-        token = m.group(0)
-        ns = m.group(1)
+    for match in _FQ_MODULE_RE.finditer(text):
+        token = match.group(0)
+        ns = match.group(1)
         if token in modules or ns in _KNOWN_NAMESPACES:
             candidates.add(token)
     mentioned = sorted(candidates)

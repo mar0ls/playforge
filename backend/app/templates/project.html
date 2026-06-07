@@ -25,992 +25,19 @@
   </div>
 
   <!-- OVERVIEW -->
-  <div x-show="tab === 'overview'" x-cloak>
-    <div class="stats">
-      <div class="stat-tile accent">
-        <div class="label">Files</div>
-        <div class="value" x-text="counts.files"></div>
-      </div>
-      <div class="stat-tile">
-        <div class="label">Playbooks (detected)</div>
-        <div class="value" x-text="(detected.playbooks || []).length"></div>
-      </div>
-      <div class="stat-tile">
-        <div class="label">Inventories (detected)</div>
-        <div class="value" x-text="(detected.inventories || []).length"></div>
-      </div>
-      <div class="stat-tile">
-        <div class="label">Roles</div>
-        <div class="value" x-text="(detected.roles || []).length"></div>
-      </div>
-    </div>
-
-    <div class="panel-grid two">
-      <div class="card">
-        <div class="card-header">
-          <h3>Playbooks</h3>
-          <button class="btn-secondary btn-sm" @click="builder.open = !builder.open">
-            <i class="icon" data-lucide="plus"></i> New playbook
-          </button>
-        </div>
-        <template x-if="(detected.playbooks || []).length === 0">
-          <div class="muted text-sm">No playbooks detected. A playbook is a YAML file at the top level or under <code>playbooks/</code> that defines plays with <code>hosts:</code>.</div>
-        </template>
-        <ul class="tree">
-          <template x-for="pb in (detected.playbooks || [])" :key="pb">
-            <li><a href="#" @click.prevent="tab = 'run'; runForm.playbook = pb" x-text="pb"></a></li>
-          </template>
-        </ul>
-      </div>
-
-      <div class="card">
-        <h3>Inventories</h3>
-        <template x-if="(detected.inventories || []).length === 0">
-          <div class="muted text-sm">No inventories detected.</div>
-        </template>
-        <ul class="tree">
-          <template x-for="inv in (detected.inventories || [])" :key="inv">
-            <li><a href="#" @click.prevent="tab = 'run'; runForm.inventory = inv" x-text="inv"></a></li>
-          </template>
-        </ul>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3>Dependencies (Ansible Galaxy)</h3>
-        <button class="btn-secondary btn-sm" @click="galaxyInstall()"
-                :disabled="galaxy.busy || !galaxy.requirements">
-          <i class="icon" data-lucide="download"></i>
-          <span x-text="galaxy.busy ? 'Installing…' : 'Install'"></span>
-        </button>
-      </div>
-      <template x-if="!galaxy.requirements">
-        <div class="muted text-sm">No <code>requirements.yml</code> at the project root. Add one
-          (Files tab) listing <code>roles:</code> / <code>collections:</code>, then install here.</div>
-      </template>
-      <template x-if="galaxy.requirements">
-        <div>
-          <div class="text-xs muted mb-1">From <code x-text="galaxy.requirements_path"></code></div>
-          <pre class="log" style="max-height: 8rem;" x-text="galaxy.requirements"></pre>
-        </div>
-      </template>
-      <div class="form-row mt-2" style="align-items: flex-end;">
-        <label style="flex:0 0 8rem;">Add by name
-          <select x-model="galaxy.addKind">
-            <option value="collection">collection</option>
-            <option value="role">role</option>
-          </select>
-        </label>
-        <label style="flex:1;">
-          <input type="text" x-model="galaxy.addName"
-                 :placeholder="galaxy.addKind === 'role' ? 'geerlingguy.nginx' : 'community.general'"
-                 @keydown.enter.prevent="galaxyAdd()">
-        </label>
-        <button class="btn-sm" @click="galaxyAdd()" :disabled="galaxy.busy || !galaxy.addName.trim()">
-          <i class="icon" data-lucide="plus"></i> Install
-        </button>
-      </div>
-
-      <div class="row gap-md mt-2" style="flex-wrap: wrap;">
-        <div style="flex:1; min-width: 14rem;">
-          <div class="text-xs muted">Roles installed (<span x-text="galaxy.installed.roles.length"></span>)</div>
-          <template x-if="!galaxy.installed.roles.length"><span class="text-sm muted">—</span></template>
-          <div class="row wrap gap-xs">
-            <template x-for="r in galaxy.installed.roles" :key="`role-${r}`">
-              <span class="badge" style="display:inline-flex; align-items:center; gap:.3rem;">
-                <span class="font-mono" x-text="r"></span>
-                <a href="#" @click.prevent="galaxyRemove('role', r)" title="Remove" style="color:var(--fail);">✕</a>
-              </span>
-            </template>
-          </div>
-        </div>
-        <div style="flex:1; min-width: 14rem;">
-          <div class="text-xs muted">Collections installed (<span x-text="galaxy.installed.collections.length"></span>)</div>
-          <template x-if="!galaxy.installed.collections.length"><span class="text-sm muted">—</span></template>
-          <div class="row wrap gap-xs">
-            <template x-for="c in galaxy.installed.collections" :key="`coll-${c}`">
-              <span class="badge" style="display:inline-flex; align-items:center; gap:.3rem;">
-                <span class="font-mono" x-text="c"></span>
-                <a href="#" @click.prevent="galaxyRemove('collection', c)" title="Remove" style="color:var(--fail);">✕</a>
-              </span>
-            </template>
-          </div>
-        </div>
-      </div>
-      <pre class="log mt-2" x-show="galaxy.output" x-text="galaxy.output"></pre>
-      <span class="text-sm" style="color: var(--fail);" x-show="galaxy.error" x-text="galaxy.error"></span>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3>Git remote</h3>
-        <div class="row gap-sm">
-          <button class="btn-secondary btn-sm" @click="gitPull()" :disabled="git.busy || !git.remote">
-            <i class="icon" data-lucide="download"></i> Pull
-          </button>
-          <button class="btn-secondary btn-sm" @click="gitPush()" :disabled="git.busy || !git.remote">
-            <i class="icon" data-lucide="upload"></i> Push
-          </button>
-        </div>
-      </div>
-      <div class="text-xs muted" x-show="git.last_commit">
-        branch <span class="font-mono" x-text="git.branch"></span> ·
-        <span x-text="git.last_commit ? git.last_commit.message : ''"></span>
-      </div>
-      <div class="form-row mt-1">
-        <label style="flex: 2;">Remote URL
-          <input type="text" x-model="git.remoteInput"
-                 placeholder="https://gitea.local/me/repo.git  or  git@host:me/repo.git">
-        </label>
-        <button class="btn-secondary btn-sm" style="align-self: flex-end;"
-                @click="gitSetRemote()" :disabled="git.busy || !git.remoteInput">Save remote</button>
-      </div>
-      <details class="mt-1">
-        <summary class="text-xs muted" style="cursor: pointer;">HTTPS auth (private repos)</summary>
-        <div class="form-row mt-1">
-          <label>Username <input type="text" x-model="git.username" placeholder="for private HTTPS"></label>
-          <label>Token / password <input type="password" x-model="git.token" placeholder="never persisted"></label>
-        </div>
-        <p class="text-xs muted">For SSH URLs, mount your host SSH agent socket (see docker-compose.yml).</p>
-      </details>
-      <pre class="log mt-2" x-show="git.output" x-text="git.output"></pre>
-      <span class="text-sm" style="color: var(--fail);" x-show="git.error" x-text="git.error"></span>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3>Project runbook (AI)</h3>
-        <div class="row gap-sm">
-          <button class="btn-secondary btn-sm" @click="genRunbook()" :disabled="runbook.busy || !aiEnabled">
-            <i class="icon" data-lucide="book-text"></i>
-            <span x-text="runbook.busy ? 'Generating…' : (runbook.md ? 'Regenerate' : 'Generate')"></span>
-          </button>
-          <button class="btn-sm" x-show="runbook.md" @click="saveRunbook()" :disabled="runbook.saving">
-            <i class="icon" data-lucide="save"></i>
-            <span x-text="runbook.saving ? 'Saving…' : (runbook.saved ? 'Saved ✓' : 'Save as docs/RUNBOOK.md')"></span>
-          </button>
-        </div>
-      </div>
-      <p class="text-sm muted" x-show="!aiEnabled">Enable the AI helper in Settings to generate a runbook.</p>
-      <p class="text-sm muted" x-show="aiEnabled && !runbook.md && !runbook.busy">
-        Living documentation generated from your playbooks, inventory and roles — review, then save into the project.</p>
-      <div class="md-body" style="max-height: 26rem; overflow-y: auto;" x-show="runbook.md" x-html="renderMarkdown(runbook.md)"></div>
-      <span class="text-sm" style="color: var(--fail);" x-show="runbook.error" x-text="runbook.error"></span>
-    </div>
-
-    <!-- Playbook builder (form / JSON) -->
-    <div class="card" x-show="builder.open" x-cloak>
-      <div class="card-header">
-        <h3>New playbook</h3>
-        <div class="view-toggle">
-          <button x-show="aiEnabled" :class="{active: builder.mode === 'ai'}" @click="builder.mode = 'ai'">✨ Describe (AI)</button>
-          <button :class="{active: builder.mode === 'form'}" @click="builder.mode = 'form'">Form</button>
-          <button :class="{active: builder.mode === 'json'}" @click="builder.mode = 'json'">Paste JSON</button>
-        </div>
-      </div>
-
-      <label x-show="playbookTemplates.length">Start from template
-        <select @change="loadPlaybookTemplate($event.target.value); $event.target.value=''">
-          <option value="">— blank —</option>
-          <template x-for="t in playbookTemplates" :key="t.id">
-            <option :value="t.id" x-text="`${t.category}: ${t.name}`" :title="t.description"></option>
-          </template>
-        </select>
-      </label>
-
-      <label>File path (must end with .yml or .yaml)
-        <input type="text" x-model="builder.path" required placeholder="playbooks/deploy.yml">
-      </label>
-
-      <!-- Form mode -->
-      <div x-show="builder.mode === 'form'">
-        <div class="form-row">
-          <label>Play name
-            <input type="text" x-model="builder.spec.name" placeholder="Deploy webapp">
-          </label>
-          <label>Target hosts (pattern or group)
-            <input type="text" x-model="builder.spec.hosts" list="builder-host-patterns" placeholder="all">
-            <datalist id="builder-host-patterns">
-              <template x-for="g in Object.keys(invData.groups || {})" :key="`bg-${g}`">
-                <option :value="g"></option>
-              </template>
-            </datalist>
-          </label>
-        </div>
-        <div class="row gap-md">
-          <div class="checkbox-row"><input type="checkbox" id="b-become" x-model="builder.spec.become"><label for="b-become" style="margin:0; display:inline;">become (sudo)</label></div>
-          <div class="checkbox-row"><input type="checkbox" id="b-gf" :checked="builder.spec.gather_facts !== false" @change="builder.spec.gather_facts = $event.target.checked ? null : false"><label for="b-gf" style="margin:0; display:inline;">gather_facts</label></div>
-        </div>
-
-        <details class="mt-2">
-          <summary class="text-sm muted" style="cursor:pointer;">Advanced play options (become_user, serial, strategy, vars)</summary>
-          <div class="form-row mt-1">
-            <label>become_user
-              <input type="text" x-model="builder.spec.become_user" placeholder="root / deploy">
-            </label>
-            <label>serial (rolling: 1, 2, 30%)
-              <input type="text" x-model="builder.spec.serial" placeholder="e.g. 1 or 25%">
-            </label>
-            <label>strategy
-              <select x-model="builder.spec.strategy">
-                <option value="">(default linear)</option>
-                <option value="free">free</option>
-                <option value="host_pinned">host_pinned</option>
-                <option value="serial">serial</option>
-              </select>
-            </label>
-          </div>
-          <label>Play vars (YAML mapping)
-            <textarea x-model="builder.spec.vars_yaml" rows="3" placeholder="app_port: 8080&#10;env: prod"></textarea>
-          </label>
-        </details>
-
-        <h4 class="mt-2">Tasks</h4>
-        <template x-for="(t, i) in builder.spec.tasks" :key="i">
-          <div class="card" style="background: var(--bg-elev-2); margin-bottom: 0.5rem;">
-            <div class="form-row">
-              <label>Task name
-                <input type="text" x-model="t.name" required>
-              </label>
-              <label>Module
-                <input type="text" x-model="t.module" list="builder-modules" required placeholder="ansible.builtin.debug">
-              </label>
-            </div>
-            <label>Args (YAML mapping)
-              <textarea x-model="t.args_yaml" rows="3" placeholder="msg: Hello"></textarea>
-            </label>
-            <div class="form-row">
-              <label>Tags (comma-separated, optional)
-                <input type="text" x-model="t.tags_raw" placeholder="setup,deploy">
-              </label>
-              <label>when (optional condition)
-                <input type="text" x-model="t.when" placeholder="ansible_os_family == 'Debian'">
-              </label>
-            </div>
-            <details>
-              <summary class="text-xs muted" style="cursor:pointer;">Advanced task (become, loop, register, notify)</summary>
-              <div class="form-row mt-1">
-                <label>loop (comma list or {{ '{{ var }}' }})
-                  <input type="text" x-model="t.loop" placeholder="nginx, git  or  {{ '{{ users }}' }}">
-                </label>
-                <label>register (var name)
-                  <input type="text" x-model="t.register" placeholder="result">
-                </label>
-              </div>
-              <div class="form-row">
-                <label>notify (handler names, comma-sep)
-                  <input type="text" x-model="t.notify" placeholder="restart nginx">
-                </label>
-                <label>become_user (this task)
-                  <input type="text" x-model="t.become_user" placeholder="root">
-                </label>
-              </div>
-              <div class="checkbox-row"><input type="checkbox" :id="`t-become-${i}`" x-model="t.become"><label :for="`t-become-${i}`" style="margin:0; display:inline;">become (this task only)</label></div>
-            </details>
-            <button type="button" class="btn-secondary btn-sm danger mt-1" @click="builder.spec.tasks.splice(i, 1)">
-              <i class="icon" data-lucide="trash-2"></i> Remove task
-            </button>
-          </div>
-        </template>
-        <button type="button" class="btn-secondary btn-sm" @click="addTaskRow()">
-          <i class="icon" data-lucide="plus"></i> Add task
-        </button>
-
-        <h4 class="mt-3">Handlers <span class="text-xs muted">(triggered by notify)</span></h4>
-        <template x-for="(h, hi) in builder.spec.handlers" :key="`h-${hi}`">
-          <div class="card" style="background: var(--bg-elev-2); margin-bottom: 0.5rem;">
-            <div class="form-row">
-              <label>Handler name <input type="text" x-model="h.name" placeholder="restart nginx"></label>
-              <label>Module <input type="text" x-model="h.module" list="builder-modules" placeholder="ansible.builtin.service"></label>
-            </div>
-            <label>Args (YAML mapping)
-              <textarea x-model="h.args_yaml" rows="2" placeholder="name: nginx&#10;state: restarted"></textarea>
-            </label>
-            <button type="button" class="btn-secondary btn-sm danger" @click="builder.spec.handlers.splice(hi, 1)">
-              <i class="icon" data-lucide="trash-2"></i> Remove handler
-            </button>
-          </div>
-        </template>
-        <button type="button" class="btn-secondary btn-sm" @click="addHandlerRow()">
-          <i class="icon" data-lucide="plus"></i> Add handler
-        </button>
-
-        <datalist id="builder-modules">
-          <option value="ansible.builtin.debug"></option>
-          <option value="ansible.builtin.ping"></option>
-          <option value="ansible.builtin.command"></option>
-          <option value="ansible.builtin.shell"></option>
-          <option value="ansible.builtin.copy"></option>
-          <option value="ansible.builtin.template"></option>
-          <option value="ansible.builtin.file"></option>
-          <option value="ansible.builtin.lineinfile"></option>
-          <option value="ansible.builtin.service"></option>
-          <option value="ansible.builtin.systemd"></option>
-          <option value="ansible.builtin.apt"></option>
-          <option value="ansible.builtin.yum"></option>
-          <option value="ansible.builtin.dnf"></option>
-          <option value="ansible.builtin.package"></option>
-          <option value="ansible.builtin.user"></option>
-          <option value="ansible.builtin.group"></option>
-          <option value="ansible.builtin.git"></option>
-          <option value="ansible.builtin.uri"></option>
-          <option value="ansible.builtin.get_url"></option>
-          <option value="ansible.builtin.cron"></option>
-          <option value="ansible.builtin.setup"></option>
-        </datalist>
-      </div>
-
-      <!-- JSON mode -->
-      <div x-show="builder.mode === 'json'">
-        <label>Spec as JSON
-          <textarea x-model="builder.jsonRaw" rows="14" class="font-mono"
-                    placeholder='{ "name": "Deploy", "hosts": "web", "become": true, "tasks": [ { "name": "Install nginx", "module": "ansible.builtin.apt", "args_yaml": "name: nginx\nstate: present" } ] }'></textarea>
-        </label>
-      </div>
-
-      <!-- AI mode: describe in plain language -->
-      <div x-show="builder.mode === 'ai'">
-        <label>Describe what this playbook should do
-          <textarea x-model="builder.aiPrompt" rows="4"
-                    placeholder="e.g. Install and start nginx on Debian hosts, then deploy the app from git and restart its service"></textarea>
-        </label>
-        <div class="row gap-sm">
-          <button type="button" @click="generateFromAI()" :disabled="builder.aiBusy || !builder.aiPrompt.trim()">
-            <i class="icon" data-lucide="sparkles"></i>
-            <span x-text="builder.aiBusy ? 'Generating…' : 'Generate'"></span>
-          </button>
-          <span class="text-sm muted" x-show="builder.aiBusy">AI is drafting and self-checking module names…</span>
-          <span class="text-sm" style="color: var(--fail);" x-show="builder.aiError" x-text="builder.aiError"></span>
-        </div>
-        <p class="text-sm muted mt-1">The draft loads into the Form tab for you to review and edit before saving.</p>
-      </div>
-
-      <div class="row gap-sm mt-2">
-        <button type="button" @click="previewPlaybook()">
-          <i class="icon" data-lucide="eye"></i> Preview
-        </button>
-        <button type="button" @click="savePlaybook()" :disabled="builder.busy">
-          <i class="icon" data-lucide="save"></i>
-          <span x-text="builder.busy ? 'Saving…' : 'Save playbook'"></span>
-        </button>
-        <div class="checkbox-row"><input type="checkbox" id="b-over" x-model="builder.overwrite"><label for="b-over" style="margin:0; display:inline;">overwrite if exists</label></div>
-        <span x-show="builder.error" class="text-sm" style="color: var(--fail);" x-text="builder.error"></span>
-      </div>
-
-      <div class="lint-panel mt-2" x-show="builder.aiValidation && (builder.aiValidation.unknown_modules || []).length">
-        <h4>
-          <i class="icon" data-lucide="shield-alert"></i>
-          <span>AI self-check: modules not found by ansible-doc</span>
-        </h4>
-        <template x-for="m in ((builder.aiValidation && builder.aiValidation.unknown_modules) || [])" :key="m">
-          <div class="lint-issue severity-warning">
-            <span class="rule" x-text="m"></span>
-            <span class="desc">not in the installed module list — verify it exists / install its collection before running</span>
-            <span></span>
-          </div>
-        </template>
-      </div>
-
-      <div x-show="builder.preview" class="mt-2">
-        <h4>Preview</h4>
-        <pre class="log" x-text="builder.preview"></pre>
-      </div>
-    </div>
-  </div>
+  {% include "project/_tab_overview.html" %}
 
   <!-- FILES -->
-  <div x-show="tab === 'files'" x-cloak>
-    <div class="panel-grid aside">
-      <div class="card tree-card">
-        <div class="row between" style="align-items:center;">
-          <h3>Tree</h3>
-          <div class="row gap-xs">
-            <button class="btn-ghost btn-sm" @click="collapseAll()" title="Collapse all folders">▸</button>
-            <button class="btn-ghost btn-sm" @click="collapsedDirs = []" title="Expand all folders">▾</button>
-          </div>
-        </div>
-        <ul class="tree">
-          <template x-for="node in visibleTree()" :key="node.path">
-            <li :style="`margin-left:${node.depth * 0.8}rem`">
-              <span x-show="node.isDir" class="dir" style="cursor:pointer; user-select:none;"
-                    @click="toggleDir(node.path)">
-                <span x-text="collapsedDirs.includes(node.path) ? '▸' : '▾'"></span>
-                <span x-text="node.name"></span>
-              </span>
-              <a x-show="!node.isDir" href="#"
-                 :class="{active: selected === node.path}"
-                 @click.prevent="openFile(node.path)" x-text="node.name"></a>
-            </li>
-          </template>
-        </ul>
-      </div>
-      <div>
-        <template x-if="!selected">
-          <div class="empty-state">
-            <i class="icon" data-lucide="file-code-2"></i>
-            <p>Pick a file from the tree to edit it.</p>
-          </div>
-        </template>
-        <div x-show="selected" x-cloak>
-          <div class="editor-toolbar">
-            <span class="file-name">
-              <span x-text="selected"></span>
-              <span class="dirty-dot" x-show="dirty" title="unsaved changes"></span>
-              <span class="badge" x-show="fileEncrypted" style="margin-left:.4rem;">🔒 vault</span>
-            </span>
-            <div class="right">
-              <!-- Vault controls: only when a vault_password credential exists -->
-              <template x-if="vaultCreds.length">
-                <span class="row gap-xs" style="align-items:center;">
-                  <select x-model.number="vaultCredId" class="btn-sm" title="Vault password credential"
-                          style="max-width:10rem;">
-                    <template x-for="c in vaultCreds" :key="c.id">
-                      <option :value="c.id" x-text="c.name"></option>
-                    </template>
-                  </select>
-                  <button class="btn-secondary btn-sm" x-show="!fileEncrypted"
-                          @click="vaultEncrypt()" :disabled="vaultBusy">
-                    <i class="icon" data-lucide="lock"></i> Encrypt
-                  </button>
-                  <button class="btn-secondary btn-sm" x-show="fileEncrypted"
-                          @click="vaultView()" :disabled="vaultBusy">
-                    <i class="icon" data-lucide="eye"></i> View
-                  </button>
-                  <button class="btn-secondary btn-sm" x-show="fileEncrypted"
-                          @click="vaultDecrypt()" :disabled="vaultBusy">
-                    <i class="icon" data-lucide="lock-open"></i> Decrypt
-                  </button>
-                </span>
-              </template>
-              <span class="badge run" x-show="linting"><span class="dot run"></span> Linting</span>
-              <button class="btn-secondary btn-sm" @click="runLint()" :disabled="linting || !selected">
-                <i class="icon" data-lucide="shield-check"></i> Lint
-              </button>
-              <button class="btn-sm" @click="saveFile()" :disabled="!dirty || saving">
-                <i class="icon" data-lucide="save"></i>
-                <span x-text="saving ? 'Saving…' : 'Save'"></span>
-              </button>
-            </div>
-          </div>
-          <div class="monaco-frame" x-ref="editor"></div>
-
-          <div class="lint-panel" x-show="vaultPlaintext">
-            <h4>
-              <i class="icon" data-lucide="eye"></i>
-              <span>Decrypted view (not saved to disk)</span>
-              <button class="btn-secondary btn-sm" @click="vaultPlaintext = ''" style="margin-left:auto;">Hide</button>
-            </h4>
-            <pre class="log" x-text="vaultPlaintext"></pre>
-          </div>
-
-          <div class="lint-panel" x-show="lintIssues.length || lintError">
-            <h4>
-              <i class="icon" data-lucide="shield-alert"></i>
-              <span>Lint issues</span>
-              <span class="badge muted" x-text="lintIssues.length"></span>
-            </h4>
-            <template x-if="lintError">
-              <div class="lint-issue severity-error">
-                <span class="rule">lint-error</span>
-                <span class="desc" x-text="lintError"></span>
-                <span></span>
-              </div>
-            </template>
-            <template x-for="(it, i) in lintIssues" :key="i">
-              <div class="lint-issue" :class="`severity-${it.monaco_severity}`"
-                   @click="jumpTo(it.line, it.column)" style="cursor:pointer;">
-                <span class="rule" x-text="it.rule"></span>
-                <span class="desc" x-text="it.description"></span>
-                <span class="loc" x-text="`L${it.line}:${it.column}`"></span>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  {% include "project/_tab_files.html" %}
 
   <!-- INVENTORY -->
-  <div x-show="tab === 'inventory'" x-cloak>
-    <div class="panel-grid aside-right">
-      <div>
-        <div class="card">
-          <div class="card-header">
-            <h3>Inventory</h3>
-            <select x-model="invTab.path" @change="loadInvTabData()" style="max-width: 320px;">
-              <option value="">— pick an inventory —</option>
-              <template x-for="inv in (detected.inventories || [])" :key="inv">
-                <option :value="inv" x-text="inv"></option>
-              </template>
-            </select>
-          </div>
-
-          <template x-if="invTab.path && invTab.data && !invTab.data.hosts.length">
-            <div class="muted text-sm">No hosts found yet in <code x-text="invTab.path"></code>. Add one on the right.</div>
-          </template>
-
-          <template x-for="(g, name) in (invTab.data.groups || {})" :key="name">
-            <div class="mt-1" x-show="name !== 'all' && name !== 'ungrouped'">
-              <h4 class="font-mono" style="text-transform:none; letter-spacing:0; color: var(--text-soft);">[<span x-text="name"></span>]</h4>
-              <table>
-                <thead><tr><th>Host</th><th>Member of</th></tr></thead>
-                <tbody>
-                  <template x-for="h in g.hosts" :key="`${name}-${h}`">
-                    <tr>
-                      <td class="font-mono text-sm" x-text="h"></td>
-                      <td class="text-xs muted" x-text="hostGroups(h).join(', ')"></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-              <template x-if="g.children && g.children.length">
-                <div class="text-xs muted">child groups: <span x-text="g.children.join(', ')"></span></div>
-              </template>
-            </div>
-          </template>
-
-          <template x-if="invTab.path">
-            <div class="mt-2">
-              <h4>vars files</h4>
-              <div class="text-xs muted" x-show="!invTab.varsFiles.length">
-                No group_vars or host_vars detected at this inventory level. Use the Files tab to create them.
-              </div>
-              <ul class="tree text-sm">
-                <template x-for="f in invTab.varsFiles" :key="f">
-                  <li><a href="#" @click.prevent="tab='files'; openFile(f)" class="font-mono" x-text="f"></a></li>
-                </template>
-              </ul>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <div class="card" x-show="invTab.path" x-cloak>
-        <h3>Add host</h3>
-        <form @submit.prevent="addHost()">
-          <label>Host name
-            <input type="text" x-model="addForm.name" required placeholder="web03.example.com">
-          </label>
-          <label>Group
-            <input type="text" x-model="addForm.group" required list="inv-groups"
-                   placeholder="pick an existing group or type a new one">
-            <datalist id="inv-groups">
-              <template x-for="g in Object.keys(invTab.data.groups || {})" :key="`opt-${g}`">
-                <option :value="g" x-show="g !== 'all' && g !== 'ungrouped'"></option>
-              </template>
-            </datalist>
-          </label>
-          <div class="form-row">
-            <label>ansible_host (IP, optional)
-              <input type="text" x-model="addForm.host" placeholder="10.0.0.42">
-            </label>
-            <label>ansible_user
-              <input type="text" x-model="addForm.user" placeholder="root">
-            </label>
-            <label>ansible_port
-              <input type="text" x-model="addForm.port" placeholder="22">
-            </label>
-          </div>
-          <label>Extra vars (YAML-ish, one `key=value` per line, optional)
-            <textarea x-model="addForm.extraRaw" rows="3" placeholder="ansible_python_interpreter=/usr/bin/python3"></textarea>
-          </label>
-          <div class="row gap-sm mt-1">
-            <button type="submit" :disabled="addForm.busy">
-              <i class="icon" data-lucide="plus"></i>
-              <span x-text="addForm.busy ? 'Saving…' : 'Add host'"></span>
-            </button>
-            <span x-show="addForm.lastSaved" class="text-xs muted" x-text="addForm.lastSaved"></span>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
+  {% include "project/_tab_inventory.html" %}
 
   <!-- RUN -->
-  <div x-show="tab === 'run'" x-cloak>
-    <div class="panel-grid aside">
-      <div class="card">
-        <div class="card-header">
-          <h3>Run parameters</h3>
-          <button class="btn-secondary btn-sm" @click="showSaveTpl = !showSaveTpl" :disabled="!runForm.playbook">
-            <i class="icon" data-lucide="bookmark-plus"></i> Save as template
-          </button>
-        </div>
-
-        <div class="row gap-sm" style="align-items: flex-end;">
-          <label style="flex: 1;">Environment
-            <select x-model.number="selectedEnvId" @change="applyEnvironment(selectedEnvId)">
-              <option value="0">— none —</option>
-              <template x-for="e in environments" :key="e.id">
-                <option :value="e.id" x-text="e.name"></option>
-              </template>
-            </select>
-          </label>
-          <button type="button" class="btn-secondary btn-sm" @click="showEnvMgr = !showEnvMgr">
-            <i class="icon" data-lucide="layers"></i> Manage
-          </button>
-        </div>
-
-        <div class="card" x-show="showEnvMgr" x-cloak style="background: var(--bg-elev-2); margin-bottom: 0.75rem;">
-          <h4>Environments</h4>
-          <template x-if="!environments.length">
-            <p class="muted text-sm">None yet. An environment pairs an inventory with a default credential.</p>
-          </template>
-          <template x-for="e in environments" :key="e.id">
-            <div class="row between" style="padding: 0.25rem 0;">
-              <span class="text-sm"><strong x-text="e.name"></strong>
-                <span class="muted font-mono text-xs" x-text="e.inventory_path || '(no inventory)'"></span></span>
-              <button type="button" class="btn-secondary btn-sm danger" @click="deleteEnvironment(e.id)">
-                <i class="icon" data-lucide="trash-2"></i></button>
-            </div>
-          </template>
-          <div class="form-row mt-1">
-            <label>Name
-              <input type="text" x-model="envForm.name" placeholder="production">
-            </label>
-            <label>Inventory
-              <select x-model="envForm.inventory_path">
-                <option value="">(none)</option>
-                <template x-for="inv in (detected.inventories || [])" :key="`env-${inv}`">
-                  <option :value="inv" x-text="inv"></option>
-                </template>
-              </select>
-            </label>
-          </div>
-          <label>Default credential
-            <select x-model.number="envForm.default_credential_id">
-              <option value="0">— none —</option>
-              <template x-for="c in allCreds" :key="`envc-${c.id}`">
-                <option :value="c.id" x-text="`${c.kind}: ${c.name}`"></option>
-              </template>
-            </select>
-          </label>
-          <button type="button" class="btn-sm mt-1" @click="saveEnvironment()" :disabled="!envForm.name.trim()">
-            <i class="icon" data-lucide="plus"></i> Add environment
-          </button>
-        </div>
-
-        <template x-if="templates.length">
-          <label>Load from template
-            <select @change="loadTemplate($event.target.value)">
-              <option value="">— start from scratch —</option>
-              <template x-for="t in templates" :key="t.id">
-                <option :value="t.id" x-text="t.name"></option>
-              </template>
-            </select>
-          </label>
-        </template>
-
-        <div class="card" x-show="showSaveTpl" x-cloak style="background: var(--bg-elev-2); margin-bottom: 0.75rem;">
-          <h4>Save current parameters as a template</h4>
-          <label>Template name
-            <input type="text" x-model="saveTpl.name" placeholder="deploy-prod" required>
-          </label>
-          <label>Description (optional)
-            <input type="text" x-model="saveTpl.description">
-          </label>
-          <div class="row gap-sm">
-            <button @click="saveAsTemplate()" :disabled="!saveTpl.name">Save</button>
-            <button class="btn-secondary" @click="showSaveTpl = false">Cancel</button>
-          </div>
-        </div>
-
-        <form @submit.prevent="runPlaybook()">
-          <label>Playbook
-            <select x-model="runForm.playbook" required @change="loadTags()">
-              <option value="">— pick a playbook —</option>
-              <template x-for="pb in (detected.playbooks || [])" :key="pb">
-                <option :value="pb" x-text="pb"></option>
-              </template>
-            </select>
-          </label>
-          <label>Inventory
-            <select x-model="runForm.inventory" @change="loadInventoryHosts()">
-              <option value="">(default from ansible.cfg)</option>
-              <template x-for="inv in (detected.inventories || [])" :key="inv">
-                <option :value="inv" x-text="inv"></option>
-              </template>
-            </select>
-          </label>
-          <label>Tags
-            <template x-if="availableTags.length">
-              <div class="row wrap gap-sm mb-1">
-                <template x-for="t in availableTags" :key="t">
-                  <button type="button" class="tag-chip"
-                          :class="{active: selectedTags.includes(t)}"
-                          @click="toggleTag(t)" x-text="t"></button>
-                </template>
-              </div>
-            </template>
-            <template x-if="!availableTags.length && runForm.playbook">
-              <div class="text-xs muted mb-1">No tags found in this playbook — type them manually below if needed.</div>
-            </template>
-            <input type="text" x-model="customTagsRaw"
-                   :placeholder="availableTags.length ? 'or add custom tags (comma-separated)' : 'tags (comma-separated)'">
-          </label>
-          <label x-show="availableTags.length">
-            Skip tags
-            <div class="row wrap gap-sm">
-              <template x-for="t in availableTags" :key="`skip-${t}`">
-                <button type="button" class="tag-chip skip"
-                        :class="{active: selectedSkipTags.includes(t)}"
-                        @click="toggleSkipTag(t)" x-text="t"></button>
-              </template>
-            </div>
-          </label>
-          <label>Limit (host pattern)
-            <input type="text" x-model="runForm.limit" list="inv-targets" placeholder="webservers, web01.example.com">
-            <datalist id="inv-targets">
-              <template x-for="g in Object.keys(invData.groups || {})" :key="g">
-                <option :value="g"></option>
-              </template>
-              <template x-for="h in (invData.hosts || [])" :key="h">
-                <option :value="h"></option>
-              </template>
-            </datalist>
-          </label>
-          <template x-if="(invData.hosts || []).length || Object.keys(invData.groups || {}).length">
-            <div class="mb-2">
-              <div class="text-xs muted" style="margin-bottom: 0.3rem;">Quick-pick from inventory:</div>
-              <div class="row wrap gap-sm">
-                <template x-for="g in Object.keys(invData.groups || {})" :key="`g-${g}`">
-                  <button type="button" class="btn-secondary btn-sm" @click="runForm.limit = g" x-text="g"></button>
-                </template>
-                <template x-for="h in (invData.hosts || [])" :key="`h-${h}`">
-                  <button type="button" class="btn-ghost btn-sm font-mono" @click="runForm.limit = h" x-text="h"></button>
-                </template>
-              </div>
-            </div>
-          </template>
-          <template x-if="sshCreds.length">
-            <label>SSH credential (optional)
-              <select x-model.number="selectedCredentialId">
-                <option :value="0">— none (use defaults) —</option>
-                <template x-for="c in sshCreds" :key="c.id">
-                  <option :value="c.id" x-text="c.name + (c.description ? ' — ' + c.description : '')"></option>
-                </template>
-              </select>
-            </label>
-          </template>
-
-          <label>Verbosity
-            <select x-model.number="runForm.verbosity">
-              <option :value="0">0 — quiet</option>
-              <option :value="1">1 — -v (per-task output)</option>
-              <option :value="2">2 — -vv (module info)</option>
-              <option :value="3">3 — -vvv (connection debug)</option>
-              <option :value="4">4 — -vvvv (full debug)</option>
-            </select>
-          </label>
-
-          <div class="checkbox-row"><input type="checkbox" id="cm" x-model="runForm.checkMode"><label for="cm" style="margin:0; display:inline;">--check (dry run)</label></div>
-          <div class="checkbox-row"><input type="checkbox" id="sx" x-model="runForm.syntaxOnly"><label for="sx" style="margin:0; display:inline;">--syntax-check</label></div>
-          <div class="row gap-sm mt-2">
-            <button type="submit" :disabled="running"><i class="icon" data-lucide="play"></i> Run</button>
-            <button type="button" class="btn-secondary" @click="previewRun()" :disabled="running || previewing || !runForm.playbook">
-              <i class="icon" data-lucide="eye"></i>
-              <span x-text="previewing ? 'Previewing…' : 'Preview (dry-run)'"></span>
-            </button>
-            <button type="button" class="btn-secondary" @click="ping()" :disabled="running"><i class="icon" data-lucide="radio"></i> Ping all</button>
-          </div>
-        </form>
-      </div>
-
-      <div class="card" x-show="preview" x-cloak>
-        <div class="card-header">
-          <h3>Preview — what would change</h3>
-          <button class="btn-secondary btn-sm" x-show="aiEnabled" @click="narratePlan()" :disabled="narrating">
-            <i class="icon" data-lucide="sparkles"></i>
-            <span x-text="narrating ? 'Asking…' : 'Explain (AI)'"></span>
-          </button>
-        </div>
-        <template x-if="preview && !preview.changes.length && !(preview.failures && preview.failures.length)">
-          <p class="text-sm" style="color: var(--ok,#3fb950);">✓ No changes — hosts already match the desired state (no drift).</p>
-        </template>
-        <template x-if="preview && preview.changes.length">
-          <div>
-            <p class="text-sm muted" x-text="`${preview.changes.length} task(s) would change:`"></p>
-            <table>
-              <thead><tr><th>Host</th><th>Task</th></tr></thead>
-              <tbody>
-                <template x-for="(c, i) in preview.changes" :key="i">
-                  <tr><td class="font-mono text-xs" x-text="c.host || '?'"></td><td class="text-sm" x-text="c.task || ''"></td></tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </template>
-        <template x-if="preview && preview.failures && preview.failures.length">
-          <p class="text-sm" style="color: var(--fail,#f85149);">⚠️ Preview hit errors (e.g. unreachable host or a task that can't run in check mode): <span x-text="preview.failures.length"></span></p>
-        </template>
-        <div class="card mt-2" x-show="planNarration" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
-          <div class="row gap-sm" style="align-items: baseline;"><i class="icon" data-lucide="sparkles"></i><strong>AI summary</strong></div>
-          <p class="text-sm" style="white-space: pre-wrap;" x-text="planNarration"></p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3>Output</h3>
-          <div class="row gap-sm">
-            <div class="view-toggle">
-              <button :class="{active: !showRaw}" @click="showRaw = false">Tasks</button>
-              <button :class="{active: showRaw}" @click="showRaw = true">Raw</button>
-            </div>
-            <button class="btn-secondary btn-sm danger" x-show="running" @click="cancelRun()">
-              <i class="icon" data-lucide="square"></i> Cancel
-            </button>
-            <span x-show="running" class="badge run"><span class="dot run"></span> RUNNING</span>
-            <span x-show="summary" :class="`badge ${summaryBadgeClass()}`"
-                  x-text="summaryBadgeLabel()"></span>
-          </div>
-        </div>
-
-        <template x-if="!running && !logLines.length && !plays.length && !summary">
-          <div class="empty-state"><i class="icon" data-lucide="terminal"></i><p>Run output will appear here.</p></div>
-        </template>
-
-        <!-- Structured view -->
-        <div x-show="!showRaw && (plays.length || running)">
-          <template x-for="play in plays" :key="play.id">
-            <div class="play-block">
-              <div class="play-header">PLAY [<span x-text="play.name || '(unnamed)'"></span>]</div>
-              <template x-for="task in play.tasks" :key="task.id">
-                <div class="task-row" :class="{open: task.open, 'has-fail': task.hasFail, 'has-change': task.hasChange}">
-                  <div class="task-line" @click="task.open = !task.open">
-                    <span x-text="task.open ? '▾' : '▸'" class="muted text-xs"></span>
-                    <span class="task-name" x-text="task.name || '(unnamed task)'"></span>
-                    <div class="task-chips">
-                      <template x-for="(s, host) in task.hosts" :key="host">
-                        <span class="host-chip" :class="`status-${s.status}`" :title="`${host}: ${s.status}`" x-text="host"></span>
-                      </template>
-                    </div>
-                  </div>
-                  <div x-show="task.open" x-cloak class="task-detail">
-                    <template x-for="(s, host) in task.hosts" :key="host">
-                      <div class="host-result">
-                        <div class="host-result-head">
-                          <span class="host-chip" :class="`status-${s.status}`" x-text="s.status"></span>
-                          <strong x-text="host"></strong>
-                        </div>
-                        <pre x-show="s.output" x-text="s.output"></pre>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </template>
-        </div>
-
-        <!-- Raw log fallback -->
-        <pre class="log" x-ref="log" x-show="showRaw && logLines.length" x-text="logLines.join('\n')"></pre>
-
-        <template x-if="summary">
-          <div class="mt-2">
-            <h4>Per-host stats</h4>
-            <table>
-              <thead><tr><th>Host</th><th>ok</th><th>changed</th><th>failures</th><th>unreachable</th><th>skipped</th></tr></thead>
-              <tbody>
-                <template x-for="(s, host) in summary.hosts" :key="host">
-                  <tr>
-                    <td x-text="host"></td>
-                    <td x-text="s.ok || 0"></td>
-                    <td x-text="s.changed || 0"></td>
-                    <td x-text="s.failures || 0"></td>
-                    <td x-text="s.unreachable || 0"></td>
-                    <td x-text="s.skipped || 0"></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-
-            <template x-if="failedHosts().length">
-              <div class="mt-1">
-                <button @click="replayFailed()">
-                  <i class="icon" data-lucide="rotate-ccw"></i>
-                  <span x-text="`Replay ${failedHosts().length} failed host(s)`"></span>
-                </button>
-              </div>
-            </template>
-
-            <template x-if="summary.failures.length">
-              <div class="mt-2">
-                <h4>Failures</h4>
-                <template x-for="(f, i) in summary.failures" :key="i">
-                  <div class="card" style="background:#1a0f12; border-color:#3d1d1d;">
-                    <div class="row between">
-                      <strong x-text="`${f.host || '?'} — ${f.task || ''}`"></strong>
-                      <button class="btn-secondary btn-sm" x-show="aiEnabled"
-                              @click="explainFailure(i, f)" :disabled="aiBusy[i]">
-                        <i class="icon" data-lucide="sparkles"></i>
-                        <span x-text="aiBusy[i] ? 'Asking…' : 'Explain (AI)'"></span>
-                      </button>
-                    </div>
-                    <pre class="log" x-text="(f.result && f.result.msg) || JSON.stringify(f.result, null, 2)"></pre>
-                    <template x-if="aiExplain[i]">
-                      <div class="card mt-1" style="background: rgba(47,129,247,0.06); border-color: rgba(47,129,247,0.25);">
-                        <div class="row gap-sm" style="align-items: baseline;">
-                          <i class="icon" data-lucide="sparkles"></i>
-                          <strong>AI explanation</strong>
-                          <span class="muted text-xs" x-text="aiExplain[i].model"></span>
-                          <template x-if="aiExplain[i].validation">
-                            <span :class="`badge ${confidenceBadge(aiExplain[i].validation.confidence)}`"
-                                  x-text="`${aiExplain[i].validation.confidence || ''} confidence`"></span>
-                          </template>
-                        </div>
-                        <p class="text-sm" style="white-space: pre-wrap;" x-text="aiExplain[i].explanation"></p>
-                        <template x-if="aiExplain[i].validation && (aiExplain[i].validation.unknown_modules || []).length">
-                          <div class="text-xs mt-1" style="color: var(--warn);">
-                            ⚠️ Modules referenced but not installed in this container:
-                            <code x-text="aiExplain[i].validation.unknown_modules.join(', ')"></code>
-                          </div>
-                        </template>
-                        <template x-if="aiExplain[i].validation && aiExplain[i].validation.self_critique && (aiExplain[i].validation.self_critique.unsupported_claims || []).length">
-                          <div class="text-xs mt-1">
-                            <div style="color: var(--warn);">⚠️ Claims a second AI pass couldn't ground in the failure record:</div>
-                            <ul style="padding-left: 1.25rem; margin: 0.25rem 0;">
-                              <template x-for="c in aiExplain[i].validation.self_critique.unsupported_claims" :key="c">
-                                <li class="muted" x-text="c"></li>
-                              </template>
-                            </ul>
-                          </div>
-                        </template>
-                      </div>
-                    </template>
-                  </div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </template>
-      </div>
-    </div>
-  </div>
+  {% include "project/_tab_run.html" %}
 
   <!-- HISTORY -->
-  <div x-show="tab === 'history'" x-cloak>
-    <div class="card">
-      <template x-if="history.length === 0">
-        <div class="muted text-sm">No runs recorded yet for this project.</div>
-      </template>
-      <table x-show="history.length">
-        <thead><tr><th>Status</th><th>Playbook</th><th>Tags</th><th>Started</th><th>Duration</th></tr></thead>
-        <tbody>
-          <template x-for="r in history" :key="r.id">
-            <tr class="clickable" @click="window.location.href = `/projects/${projectId}/runs/${r.id}`">
-              <td><span :class="`badge ${historyBadge(r.status)}`" x-text="r.status"></span></td>
-              <td class="font-mono text-xs" x-text="r.playbook"></td>
-              <td class="text-xs muted" x-text="r.tags"></td>
-              <td class="text-xs muted" x-text="formatTime(r.started_at)"></td>
-              <td class="text-xs muted" x-text="duration(r)"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-  </div>
+  {% include "project/_tab_history.html" %}
 
 </section>
 
@@ -1032,15 +59,19 @@ function projectPage(projectId) {
     preview: null, previewing: false, planNarration: "", narrating: false,
     dirty: false, saving: false,
     lintIssues: [], lintError: "", linting: false,
+    history: { open: false, commits: [], viewing: null, busy: false },
+    adhoc: { open: false, host_pattern: "all", module: "ping", args: "", busy: false, result: null, error: "" },
     fileEncrypted: false, vaultBusy: false, vaultPlaintext: "",
     vaultCreds: [], vaultCredId: 0,
-    templates: [], sshCreds: [], allCreds: [], selectedCredentialId: 0,
+    templates: [], sshCreds: [], becomeCreds: [], wireguardCreds: [], allCreds: [],
+    selectedCredentialId: 0, selectedBecomeId: 0, selectedWireguardIds: [],
     playbookTemplates: [],
     environments: [], selectedEnvId: 0, showEnvMgr: false,
     envForm: { name: "", inventory_path: "", default_credential_id: 0 },
     galaxy: { requirements: null, requirements_path: "requirements.yml", installed: { roles: [], collections: [] }, busy: false, output: "", error: "", addKind: "collection", addName: "" },
     git: { remote: null, branch: "", last_commit: null, dirty: false, remoteInput: "", username: "", token: "", busy: false, output: "", error: "" },
     runbook: { md: "", busy: false, saving: false, saved: false, error: "" },
+    protectSecrets: false,
     showSaveTpl: false, saveTpl: { name: "", description: "" },
     _nextPlayId: 1, _nextTaskId: 1,
     aiEnabled: false, aiExplain: {}, aiBusy: {},
@@ -1072,6 +103,8 @@ function projectPage(projectId) {
       this.templates = tplR || [];
       this.allCreds = credR || [];
       this.sshCreds = (credR || []).filter(c => c.kind === "ssh_key");
+      this.becomeCreds = (credR || []).filter(c => c.kind === "become_password");
+      this.wireguardCreds = (credR || []).filter(c => c.kind === "wireguard_key");
       this.vaultCreds = (credR || []).filter(c => c.kind === "vault_password");
       if (this.vaultCreds.length && !this.vaultCredId) this.vaultCredId = this.vaultCreds[0].id;
       await this.loadEnvironments();
@@ -1091,7 +124,25 @@ function projectPage(projectId) {
         .then(r => r.ok ? r.json() : []).catch(() => []);
       await this.loadGalaxy();
       await this.loadGit();
+      this.protectSecrets = await fetch(`/api/projects/${this.projectId}/settings`)
+        .then(r => r.ok ? r.json() : {}).then(d => !!d.protect_secrets).catch(() => false);
+      // Deep-link: ?file=<rel>#files — used by the run-detail Artifacts list
+      // ("open in editor"). Done here so the tab/file open after the tree is loaded.
+      const qs = new URLSearchParams(location.search);
+      const wanted = qs.get("file");
+      if (wanted) {
+        this.tab = "files";
+        // ensureMonacoReady → openFile inside $nextTick so the Files DOM exists.
+        this.$nextTick(() => this.openFile(wanted));
+      }
       this.$nextTick(() => lucide.createIcons());
+    },
+    async toggleProtectSecrets() {
+      const r = await fetch(`/api/projects/${this.projectId}/settings`, {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({protect_secrets: this.protectSecrets}),
+      });
+      if (!r.ok) { this.protectSecrets = !this.protectSecrets; alert("failed to save setting"); }
     },
 
     async loadGit() {
@@ -1241,6 +292,19 @@ function projectPage(projectId) {
       const custom = (this.customTagsRaw || "").split(",").map(s => s.trim()).filter(Boolean);
       return [...new Set([...this.selectedTags, ...custom])];
     },
+    // --limit uses Ansible's `:` separator (group:host:!exclude). Free-text edits
+    // by the user are preserved (a manual `webservers:!web01` round-trips
+    // through toggleLimit unchanged).
+    _limitTokens() {
+      return (this.runForm.limit || "").split(":").map(s => s.trim()).filter(Boolean);
+    },
+    limitContains(token) { return this._limitTokens().includes(token); },
+    toggleLimit(token) {
+      const tokens = this._limitTokens();
+      const i = tokens.indexOf(token);
+      if (i >= 0) tokens.splice(i, 1); else tokens.push(token);
+      this.runForm.limit = tokens.join(":");
+    },
 
     async loadInventoryHosts() {
       if (!this.runForm.inventory) { this.invData = {hosts: [], groups: {}}; return; }
@@ -1254,6 +318,14 @@ function projectPage(projectId) {
     async loadEnvironments() {
       this.environments = await fetch(`/api/projects/${this.projectId}/environments`)
         .then(r => r.ok ? r.json() : []).catch(() => []);
+    },
+    // All credential ids selected for a run: SSH + become + the WireGuard checkboxes.
+    runCredentialIds() {
+      const ids = [];
+      if (this.selectedCredentialId) ids.push(this.selectedCredentialId);
+      if (this.selectedBecomeId) ids.push(this.selectedBecomeId);
+      ids.push(...(this.selectedWireguardIds || []));
+      return [...new Set(ids)];
     },
     applyEnvironment(idStr) {
       const id = parseInt(idStr, 10) || 0;
@@ -1358,7 +430,7 @@ function projectPage(projectId) {
           project_id: this.projectId, playbook: this.runForm.playbook,
           inventory: this.runForm.inventory, tags: this.computeTags(),
           skip_tags: this.selectedSkipTags, limit: this.runForm.limit,
-          credential_ids: this.selectedCredentialId ? [this.selectedCredentialId] : [],
+          credential_ids: this.runCredentialIds(),
         };
         const r = await fetch("/api/runs/preview", {
           method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
@@ -1419,7 +491,7 @@ function projectPage(projectId) {
         tags: this.computeTags(),
         skip_tags: [...this.selectedSkipTags],
         limit: this.runForm.limit, check: this.runForm.checkMode, syntax_check: this.runForm.syntaxOnly,
-        credential_ids: this.selectedCredentialId ? [this.selectedCredentialId] : [],
+        credential_ids: this.runCredentialIds(),
       };
       const r = await fetch(`/api/projects/${this.projectId}/templates`, {
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
@@ -1443,6 +515,56 @@ function projectPage(projectId) {
     },
     collapseAll() {
       this.collapsedDirs = this.flatTree.filter(n => n.isDir).map(n => n.path);
+    },
+    // ---- file/dir management (free-form, like a CLI) ----
+    async newFile() {
+      const path = prompt("New file path (relative to project root):", "playbooks/new.yml");
+      if (!path) return;
+      const r = await fetch(`/api/projects/${this.projectId}/file`, {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: path.trim(), content: ""}),
+      });
+      if (!r.ok) { alert(await r.text()); return; }
+      await this.load();
+      this.openFile(path.trim());
+    },
+    async newDir() {
+      const path = prompt("New folder path (relative to project root):", "group_vars/");
+      if (!path) return;
+      const r = await fetch(`/api/projects/${this.projectId}/dir`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: path.trim().replace(/\/+$/, "")}),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.detail || "create folder failed"); return; }
+      await this.load();
+      this.$nextTick(() => lucide.createIcons());
+    },
+    async renamePath(node) {
+      const dst = prompt(`Rename / move "${node.path}" to:`, node.path);
+      if (!dst || dst.trim() === node.path) return;
+      const r = await fetch(`/api/projects/${this.projectId}/move`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({src: node.path, dst: dst.trim()}),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.detail || "move failed"); return; }
+      // If the open file moved, follow it.
+      if (this.selected === node.path) this.selected = d.to || "";
+      await this.load();
+      if (this.selected) this.openFile(this.selected);
+      this.$nextTick(() => lucide.createIcons());
+    },
+    async deletePath(node) {
+      if (!confirm(`Delete "${node.path}"${node.isDir ? " and everything inside it" : ""}?`)) return;
+      const r = await fetch(`/api/projects/${this.projectId}/file?path=${encodeURIComponent(node.path)}`,
+        { method: "DELETE" });
+      if (!r.ok) { alert(await r.text()); return; }
+      if (this.selected === node.path || (node.isDir && this.selected.startsWith(node.path + "/"))) {
+        this.selected = "";
+      }
+      await this.load();
+      this.$nextTick(() => lucide.createIcons());
     },
     flatten(tree, prefix, depth) {
       const out = [];
@@ -1545,6 +667,34 @@ function projectPage(projectId) {
       this.load();
     },
 
+    async toggleHistory() {
+      if (!this.selected) return;
+      this.history.open = !this.history.open;
+      this.history.viewing = null;
+      if (this.history.open) {
+        this.history.busy = true;
+        try {
+          const r = await fetch(`/api/projects/${this.projectId}/file/history?path=${encodeURIComponent(this.selected)}`);
+          this.history.commits = r.ok ? (await r.json()).commits || [] : [];
+        } finally { this.history.busy = false; }
+      }
+    },
+    async viewVersion(sha) {
+      const r = await fetch(`/api/projects/${this.projectId}/file/at?path=${encodeURIComponent(this.selected)}&sha=${sha}`);
+      if (!r.ok) { alert((await r.json().catch(() => ({}))).detail || "couldn't load that version"); return; }
+      const d = await r.json();
+      this.history.viewing = { sha, content: d.content };
+    },
+    restoreVersion() {
+      if (!this.history.viewing || !heavy.editor) return;
+      // Don't auto-save: paste into editor and let the user Review+Save (gives them a
+      // chance to compare against the current buffer / cherry-pick lines).
+      heavy.editor.setValue(this.history.viewing.content);
+      this.dirty = true;
+      this.history.open = false;
+      this.history.viewing = null;
+    },
+
     async runLint() {
       if (!this.selected) return;
       this.linting = true; this.lintError = "";
@@ -1635,7 +785,7 @@ function projectPage(projectId) {
         verbosity: this.runForm.verbosity || 0,
         // [] = "explicitly no credentials" (the UI choice "— none —"); the API tells these
         // apart from "field omitted" so user can opt out of a template's credentials.
-        credential_ids: this.selectedCredentialId ? [this.selectedCredentialId] : [],
+        credential_ids: this.runCredentialIds(),
       }));
       heavy.ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
@@ -1658,6 +808,25 @@ function projectPage(projectId) {
         body: JSON.stringify({project_id: this.projectId, host_pattern: "all", module: "ping", inventory: this.runForm.inventory}),
       });
       this.summary = await r.json();
+    },
+    async runAdhoc() {
+      if (this.adhoc.busy) return;
+      this.adhoc.busy = true; this.adhoc.error = ""; this.adhoc.result = null;
+      try {
+        const r = await fetch("/api/runs/adhoc", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            project_id: this.projectId,
+            host_pattern: this.adhoc.host_pattern.trim() || "all",
+            module: this.adhoc.module.trim(),
+            args: this.adhoc.args,
+            inventory: this.runForm.inventory,
+          }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { this.adhoc.error = d.detail || "ad-hoc failed"; return; }
+        this.adhoc.result = d;
+      } finally { this.adhoc.busy = false; this.$nextTick(() => lucide.createIcons()); }
     },
 
     formatTime(iso) { if (!iso) return ""; return new Date(iso).toLocaleString(); },

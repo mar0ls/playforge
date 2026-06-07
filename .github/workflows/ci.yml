@@ -41,3 +41,18 @@ jobs:
           python-version: "3.12"
       - name: Byte-compile all backend modules
         run: python -m compileall -q backend/app
+
+  # Static type check. Lenient baseline (ignore_missing_imports) — guards against
+  # type regressions without needing third-party stubs. Fast, no image build.
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install mypy + runtime deps (for inline types)
+        run: pip install -q "mypy>=1.8" -r backend/requirements.txt
+      - name: Type-check backend/app
+        working-directory: backend
+        run: python -m mypy app --config-file mypy.ini

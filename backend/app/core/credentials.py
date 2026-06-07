@@ -112,13 +112,14 @@ def read_secret(credential_id: int) -> str | None:
         return text
 
 
-def secret_path(credential_id: int) -> Path:
-    """Return the on-disk path. NOTE: it now points at an *encrypted* file —
-    callers that pass this to subprocesses (ssh, ansible-playbook --private-key)
-    must decrypt first via `read_secret` and write to a temp file themselves.
-    Today's only caller (runner) reads the content and hands it to ansible-runner
-    which writes its own ephemeral copy, so this is fine."""
-    return _path(credential_id)
+def has_secret(credential_id: int) -> bool:
+    """True if the encrypted secret file exists. UI uses this to flag broken creds.
+
+    Returns bool, not a path: the file is encrypted, so handing its path to
+    `ssh -i` would silently fail with an opaque "invalid key" error. Read the
+    secret via `read_secret` (in-memory decrypt) when you need the actual content.
+    """
+    return _path(credential_id).is_file()
 
 
 def delete_secret(credential_id: int) -> None:

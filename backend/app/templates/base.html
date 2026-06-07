@@ -108,37 +108,75 @@
   </main>
 
 </div>
-<!-- Global slide-out AI assistant: available on every page, aware of the current project -->
-<div x-data="chatDock()" x-init="init()">
-  <button class="ai-fab" x-show="aiEnabled !== false" @click="toggle()"
-          :title="open ? 'Close assistant' : 'Ask the assistant'" x-text="open ? '✕' : '✨'"></button>
+<!-- Global slide-out AI assistant. Backed by the shared Alpine `chat` store, so the
+     dock and the full /assistant page share ONE conversation (live-synced + remembered). -->
+<div x-data x-init="$store.chat.init()">
+  <button class="ai-fab" x-show="$store.chat.aiEnabled !== false" @click="$store.chat.toggle()"
+          :title="$store.chat.open ? 'Close assistant' : 'Ask the assistant'" x-text="$store.chat.open ? '✕' : '✨'"></button>
 
-  <div class="ai-dock" x-show="open" x-cloak>
+  <div class="ai-dock" x-show="$store.chat.open" x-cloak>
     <div class="ai-dock-head">
       <strong>✨ Assistant</strong>
-      <span class="text-xs muted" x-show="projectId">· project <span class="font-mono" x-text="projectId"></span></span>
+      <div class="view-toggle" style="margin-left:.25rem;">
+        <button :class="{active: $store.chat.mode==='chat'}" @click="$store.chat.mode='chat'; $store.chat.persist()">💬</button>
+        <button :class="{active: $store.chat.mode==='agent'}" @click="$store.chat.mode='agent'; $store.chat.persist()">🤖</button>
+      </div>
       <span style="flex:1"></span>
+      <button class="btn-ghost btn-sm" @click="$store.chat.clear()" title="Clear conversation" x-show="$store.chat.messages.length">🗑</button>
       <a href="/assistant" class="btn-ghost btn-sm" title="Open full page">⤢</a>
-      <button class="btn-ghost btn-sm" @click="open=false">✕</button>
+      <button class="btn-ghost btn-sm" @click="$store.chat.open=false">✕</button>
     </div>
 
-    <div class="ai-dock-log" x-ref="log">
-      <template x-if="messages.length === 0">
+    <div class="row wrap gap-xs" x-show="$store.chat.mode==='agent'" style="padding:.4rem .6rem 0; align-items:center;">
+      <select class="btn-sm" x-model="$store.chat.agentProject" @change="$store.chat.persist()" style="max-width:9rem;">
+        <option value="">— project —</option>
+        <template x-for="p in $store.chat.projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+      </select>
+      <label class="text-xs row gap-xs" style="align-items:center;"><input type="checkbox" x-model="$store.chat.allowMutate" @change="$store.chat.persist()"> changes</label>
+      <label class="text-xs row gap-xs" style="align-items:center;"><input type="checkbox" x-model="$store.chat.allowConfirm" @change="$store.chat.persist()"> delete/web</label>
+    </div>
+
+    <div class="ai-dock-log" data-chat-log>
+      <template x-if="$store.chat.messages.length === 0">
         <div class="muted text-sm" style="padding:.4rem;">
           Tell me what you want to do — generate a playbook, fix an error, explain a module.
-          Code blocks get <strong>Copy</strong> and <strong>Save to project</strong>.
+          Switch to 🤖 to let me act on a project.
         </div>
       </template>
-      <template x-for="(m, i) in messages" :key="i">
+      <template x-for="(m, i) in $store.chat.messages" :key="i">
         <div :class="`ai-msg ${m.role}`">
-          <template x-for="(seg, j) in segments(m.content)" :key="j">
+          <template x-if="m.steps && m.steps.length">
+            <div class="text-xs" style="margin-bottom:.3rem;">
+              <strong>🤖 Actions (<span x-text="m.steps.length"></span>):</strong>
+              <template x-for="(st, si) in m.steps" :key="si">
+                <div style="border-left:2px solid #30363d; padding:.1rem .4rem;">
+                  <code x-text="st.tool"></code>
+                  <span x-show="st.observation && st.observation.error" style="color:var(--fail);" x-text="' → ' + (st.observation && st.observation.error)"></span>
+                  <span x-show="st.observation && (st.observation.saved || st.observation.to || st.observation.created || st.observation.deleted)" style="color:var(--ok,#3fb950);"> ✓</span>
+                </div>
+              </template>
+            </div>
+          </template>
+          <template x-if="m.warnings && m.warnings.length">
+            <div class="text-xs" style="border:1px solid var(--warn,#d29922); border-radius:6px; padding:.3rem .5rem; margin:.3rem 0;">
+              <strong style="color:var(--warn,#d29922);">🛡️ Safety check:</strong>
+              <template x-for="w in m.warnings" :key="w"><div x-text="w"></div></template>
+            </div>
+          </template>
+          <template x-if="m.needed && m.needed.length && m.goal">
+            <div style="margin:.3rem 0;">
+              <button class="btn btn-sm" @click="$store.chat.enableAndRetry(m)"
+                      x-text="m.needed.includes('confirm') ? '🔓 Enable delete/web & retry' : '🔓 Enable changes & retry'"></button>
+            </div>
+          </template>
+          <template x-for="(seg, j) in $store.chat.segments(m.content)" :key="j">
             <div>
               <template x-if="seg.type === 'code'">
                 <div>
                   <pre class="log" style="margin:.3rem 0;" x-text="seg.text"></pre>
                   <div class="row gap-sm" style="margin:-.1rem 0 .3rem;">
-                    <button class="btn-ghost btn-sm" @click="copy(seg.text)">Copy</button>
-                    <button class="btn-ghost btn-sm" @click="openSave(seg.text)">Save to project…</button>
+                    <button class="btn-ghost btn-sm" @click="$store.chat.copy(seg.text)">Copy</button>
+                    <button class="btn-ghost btn-sm" @click="$store.chat.openSave(seg.text)">Save to project…</button>
                   </div>
                 </div>
               </template>
@@ -155,28 +193,30 @@
           </template>
         </div>
       </template>
-      <div class="ai-msg assistant muted" x-show="busy">thinking…</div>
+      <div class="ai-msg assistant muted" x-show="$store.chat.busy" x-text="$store.chat.mode==='agent' ? 'working…' : 'thinking…'"></div>
     </div>
 
-    <div class="ai-dock-save card" x-show="saveDialog" x-cloak>
-      <div class="form-row" x-show="projects.length">
-        <select x-model="saveDialog.project">
-          <template x-for="p in projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
+    <div class="ai-dock-save card" x-show="$store.chat.saveDialog" x-cloak>
+      <div class="form-row" x-show="$store.chat.projects.length">
+        <select x-model="$store.chat.saveDialog.project">
+          <template x-for="p in $store.chat.projects" :key="p.id"><option :value="p.id" x-text="p.name"></option></template>
         </select>
-        <input type="text" x-model="saveDialog.path" placeholder="playbooks/from-assistant.yml">
+        <input type="text" x-model="$store.chat.saveDialog.path" placeholder="playbooks/from-assistant.yml">
       </div>
-      <div class="text-sm muted" x-show="!projects.length">No projects yet to save into.</div>
+      <div class="text-sm muted" x-show="!$store.chat.projects.length">No projects yet to save into.</div>
       <div class="row gap-sm mt-1">
-        <button class="btn-sm" @click="saveSnippet()" :disabled="saving || !saveDialog.project || !saveDialog.path" x-show="projects.length">Save</button>
-        <button class="btn-secondary btn-sm" @click="saveDialog=null">Cancel</button>
-        <span class="text-xs" :class="saveMsgClass" x-text="saveMsg"></span>
+        <button class="btn-sm" @click="$store.chat.saveSnippet()" :disabled="$store.chat.saving || !$store.chat.saveDialog.project || !$store.chat.saveDialog.path" x-show="$store.chat.projects.length">Save</button>
+        <button class="btn-secondary btn-sm" @click="$store.chat.saveDialog=null">Cancel</button>
+        <span class="text-xs" :class="$store.chat.saveMsgClass" x-text="$store.chat.saveMsg"></span>
       </div>
     </div>
 
-    <form class="ai-dock-input" @submit.prevent="send()">
-      <textarea x-model="input" rows="2" placeholder="Ask…  (Enter to send, Shift+Enter for newline)"
-                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); send(); }"></textarea>
-      <button type="submit" :disabled="busy || !input.trim()">➤</button>
+    <form class="ai-dock-input" @submit.prevent="$store.chat.submit()">
+      <textarea x-model="$store.chat.input" rows="2"
+                :placeholder="$store.chat.mode==='agent' ? 'Tell the agent what to do…' : 'Ask…  (Enter to send, Shift+Enter for newline)'"
+                @input.debounce.600ms="$store.chat.persist()"
+                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); $store.chat.submit(); }"></textarea>
+      <button type="submit" :disabled="$store.chat.busy || !$store.chat.input.trim()">➤</button>
     </form>
   </div>
 </div>
@@ -185,19 +225,60 @@
   document.addEventListener("DOMContentLoaded", () => lucide.createIcons());
   document.addEventListener("alpine:initialized", () => lucide.createIcons());
 
-  function chatDock() {
-    return {
-      open: false, aiEnabled: null, projectId: null, projects: [],
+  // One shared conversation for the dock AND the full /assistant page.
+  // Persisted to localStorage (TTL 7 days) so a refresh doesn't wipe it.
+  document.addEventListener("alpine:init", () => {
+    Alpine.store("chat", {
+      _ready: false,
+      open: false, aiEnabled: null, provider: "", model: "",
+      projectId: null, projects: [],
       messages: [], input: "", busy: false,
+      mode: "chat", agentProject: "", allowMutate: false, allowConfirm: false,
       saveDialog: null, saving: false, saveMsg: "", saveMsgClass: "muted",
-      async init() {
+      examples: [
+        "Write a playbook to install and start nginx on Debian hosts",
+        "How do I loop over a list of users with the user module?",
+        "Why might a task report 'unreachable' and how do I fix it?",
+      ],
+
+      init() {
         const m = location.pathname.match(/\/projects\/([^/]+)/);
         this.projectId = (m && m[1] !== "") ? m[1] : null;
-        const s = await fetch("/api/ai/status").then(r => r.ok ? r.json() : {enabled: false}).catch(() => ({enabled: false}));
-        this.aiEnabled = !!s.enabled;
-        this.projects = await fetch("/api/projects").then(r => r.ok ? r.json() : []).catch(() => []);
+        this.load();
+        if (this._ready) { this.scroll(); return; }   // only fetch once per page load
+        this._ready = true;
+        fetch("/api/ai/status").then(r => r.ok ? r.json() : {enabled: false}).catch(() => ({enabled: false}))
+          .then(s => { this.aiEnabled = !!s.enabled; this.provider = s.provider || ""; this.model = s.model || ""; });
+        fetch("/api/projects").then(r => r.ok ? r.json() : []).catch(() => [])
+          .then(ps => { this.projects = ps; if (!this.agentProject && this.projectId) this.agentProject = this.projectId; });
       },
+      // ---- persistence ----
+      load() {
+        try {
+          const raw = JSON.parse(localStorage.getItem("pf_chat") || "null");
+          if (raw && raw.savedAt && (Date.now() - raw.savedAt) < 7 * 864e5) {
+            this.messages = raw.messages || [];
+            this.mode = raw.mode || "chat";
+            this.agentProject = raw.agentProject || "";
+            this.allowMutate = !!raw.allowMutate;
+            this.allowConfirm = !!raw.allowConfirm;
+            if (!this.input) this.input = raw.input || "";
+          }
+        } catch (e) {}
+      },
+      persist() {
+        try {
+          localStorage.setItem("pf_chat", JSON.stringify({
+            messages: this.messages, mode: this.mode, agentProject: this.agentProject,
+            allowMutate: this.allowMutate, allowConfirm: this.allowConfirm,
+            input: this.input, savedAt: Date.now(),
+          }));
+        } catch (e) {}
+      },
+      clear() { this.messages = []; this.input = ""; this.persist(); },
       toggle() { this.open = !this.open; this.scroll(); },
+
+      // ---- helpers ----
       segments(c) {
         const out = []; (c || "").split("```").forEach((p, i) => {
           if (i % 2 === 1) out.push({type: "code", text: p.replace(/^[a-z0-9_-]*\n/i, "")});
@@ -205,10 +286,18 @@
         });
         return out.length ? out : [{type: "text", text: c || ""}];
       },
-      scroll() { this.$nextTick(() => { const l = this.$refs.log; if (l) l.scrollTop = l.scrollHeight; }); },
+      scroll() {
+        setTimeout(() => {
+          document.querySelectorAll(".ai-dock-log, .chat-log").forEach(l => { l.scrollTop = l.scrollHeight; });
+          if (window.lucide) lucide.createIcons();
+        }, 30);
+      },
+
+      // ---- sending ----
+      submit() { return this.mode === "agent" ? this.sendAgent() : this.send(); },
       async send() {
         const t = this.input.trim(); if (!t || this.busy) return;
-        this.messages.push({role: "user", content: t}); this.input = ""; this.busy = true; this.scroll();
+        this.messages.push({role: "user", content: t}); this.input = ""; this.busy = true; this.persist(); this.scroll();
         try {
           const r = await fetch("/api/ai/chat", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -216,18 +305,73 @@
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok) { this.messages.push({role: "assistant", content: "⚠️ " + (d.detail || "request failed")}); return; }
-          this.messages.push({role: "assistant", content: d.reply || "(empty response)",
-                              issues: (d.validation && d.validation.playbook_issues) || []});
-        } finally { this.busy = false; this.scroll(); }
+          const issues = (d.validation && d.validation.playbook_issues) || [];
+          this.messages.push({
+            role: "assistant", content: d.reply || "(empty response)",
+            issues, playbook_issues: issues,   // dock uses `issues`, page uses `playbook_issues`
+            invalid_modules: (d.validation && d.validation.invalid_modules) || [],
+            uninstalled_modules: (d.validation && d.validation.uninstalled_modules) || [],
+            files: d.files || [],
+          });
+          this.provider = d.provider || this.provider; this.model = d.model || this.model;
+        } finally { this.busy = false; this.persist(); this.scroll(); }
       },
+      async sendAgent() {
+        const t = this.input.trim(); if (!t || this.busy) return;
+        const proj = this.agentProject || this.projectId;
+        if (!proj) { alert("Pick a project for the agent first."); return; }
+        this.agentProject = proj;
+        this.messages.push({role: "user", content: t}); this.input = ""; this.busy = true; this.persist(); this.scroll();
+        try {
+          const r = await fetch("/api/ai/agent", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({project_id: proj, goal: t, allow_mutate: this.allowMutate, allow_confirm: this.allowConfirm}),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) { this.messages.push({role: "assistant", agent: true, content: "⚠️ " + (d.detail || "agent failed")}); return; }
+          this.messages.push({
+            role: "assistant", agent: true,
+            content: d.summary || (d.finished ? "(done)" : "(no summary)"),
+            steps: d.steps || [], stoppedReason: d.stopped_reason || "",
+            needed: d.needed_permissions || [], warnings: d.warnings || [], goal: t,
+          });
+          this.provider = d.provider || this.provider; this.model = d.model || this.model;
+        } finally { this.busy = false; this.persist(); this.scroll(); }
+      },
+      enableAndRetry(m) {
+        if ((m.needed || []).includes("mutate")) this.allowMutate = true;
+        if ((m.needed || []).includes("confirm")) { this.allowConfirm = true; this.allowMutate = true; }
+        this.input = m.goal; this.persist(); this.sendAgent();
+      },
+
+      // ---- save snippet to a project ----
       copy(text) {
         if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text); return; }
         const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
         document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e) {} document.body.removeChild(ta);
       },
-      openSave(content) {
+      openSave(content, suggestedPath) {
         this.saveMsg = "";
-        this.saveDialog = {content, project: this.projectId || ((this.projects[0] || {}).id) || "", path: "playbooks/from-assistant.yml"};
+        this.saveDialog = {content, project: this.projectId || this.agentProject || ((this.projects[0] || {}).id) || "",
+                           path: suggestedPath || "playbooks/from-assistant.yml"};
+      },
+      async saveAllFiles(files) {
+        if (!files || !files.length) return;
+        const project = this.projectId || this.agentProject || ((this.projects[0] || {}).id) || "";
+        if (!project) { this.saveMsg = "No project to save into."; this.saveMsgClass = "err"; return; }
+        this.saveMsg = "Saving…"; this.saveMsgClass = "muted";
+        let ok = 0;
+        for (const f of files) {
+          try {
+            const r = await fetch(`/api/projects/${project}/file`, {
+              method: "PUT", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({path: f.path, content: f.content, message: `Add ${f.path} from assistant`}),
+            });
+            if (r.ok) ok++;
+          } catch (e) {}
+        }
+        this.saveMsg = `Saved ${ok}/${files.length} file(s) ✓`;
+        this.saveMsgClass = ok === files.length ? "ok" : "err";
       },
       async saveSnippet() {
         if (!this.saveDialog || this.saving) return;
@@ -241,8 +385,8 @@
           this.saveMsg = "Saved ✓"; this.saveMsgClass = "ok"; setTimeout(() => { this.saveDialog = null; }, 1200);
         } finally { this.saving = false; }
       },
-    };
-  }
+    });
+  });
 </script>
 </body>
 </html>

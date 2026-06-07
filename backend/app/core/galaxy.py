@@ -97,7 +97,7 @@ def _safe_name(name: str) -> str:
 def _upsert_requirement(project_root: Path, kind: str, name: str) -> None:
     """Add `name` to requirements.yml under roles:/collections: (idempotent)."""
     req = project_root / DEFAULT_REQUIREMENTS
-    data = {"roles": [], "collections": []}
+    data: dict = {"roles": [], "collections": []}
     if req.is_file():
         data = parse_requirements(req.read_text())
     key = "roles" if kind == "role" else "collections"

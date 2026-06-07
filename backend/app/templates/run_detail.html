@@ -68,11 +68,34 @@
 
       <div class="card" x-show="(run.artifacts || []).length">
         <h3>Artifacts (<span x-text="(run.artifacts || []).length"></span>)</h3>
-        <p class="text-sm muted">Files this run wrote into the project (generated keys, rendered configs, fetched files). They've been committed to the project repo.</p>
+        <p class="text-sm muted">Files this run wrote into the project (generated keys, rendered configs, fetched files). Committed to the project repo — click to preview here, or open in the editor.</p>
         <ul class="tree">
           <template x-for="a in (run.artifacts || [])" :key="a">
             <li>
-              <a :href="`/projects/${projectId}?file=${encodeURIComponent(a)}#files`" class="font-mono text-sm" x-text="a"></a>
+              <div class="row gap-sm" style="align-items: baseline;">
+                <button class="btn-ghost btn-sm" @click="toggleArtifact(a)"
+                        :title="artifactOpen[a] ? 'Collapse' : 'Preview'"
+                        x-text="artifactOpen[a] ? '▾' : '▸'"></button>
+                <span class="font-mono text-sm" x-text="a"></span>
+                <a :href="`/projects/${projectId}?file=${encodeURIComponent(a)}#files`"
+                   class="btn-ghost btn-sm" title="Open in editor">↗ Open</a>
+              </div>
+              <div x-show="artifactOpen[a]" x-cloak style="margin: 0.3rem 0 0.6rem 1.2rem;">
+                <template x-if="artifactContent[a] === undefined">
+                  <div class="text-xs muted">Loading…</div>
+                </template>
+                <template x-if="artifactContent[a] && artifactContent[a].error">
+                  <div class="text-xs" style="color: var(--fail);" x-text="artifactContent[a].error"></div>
+                </template>
+                <template x-if="artifactContent[a] && !artifactContent[a].error">
+                  <div>
+                    <div class="text-xs muted" x-show="artifactContent[a].truncated">
+                      Truncated (preview only — open in editor for the full file).
+                    </div>
+                    <pre class="log" style="max-height: 14rem;" x-text="artifactContent[a].content"></pre>
+                  </div>
+                </template>
+              </div>
             </li>
           </template>
         </ul>
@@ -189,6 +212,7 @@ function runDetail(projectId, runId) {
     projectId, runId, run: null, loaded: false,
     aiEnabled: false, aiExplain: {}, aiBusy: {},
     aiFix: {}, aiFixBusy: {}, fixApplying: {}, fixApplied: {}, rerunning: false,
+    artifactOpen: {}, artifactContent: {},
 
     async load() {
       const [r, aiR] = await Promise.all([
@@ -292,6 +316,30 @@ function runDetail(projectId, runId) {
       const end = this.run.ended_at ? new Date(this.run.ended_at) : new Date();
       const s = Math.round((end - new Date(this.run.started_at)) / 1000);
       return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+    },
+    async toggleArtifact(path) {
+      // Lazy-load on first expand. Binary files (e.g. a generated SSH key) blow
+      // out the preview if rendered as text; trim aggressively and let the user
+      // open them in the editor when really needed.
+      this.artifactOpen = { ...this.artifactOpen, [path]: !this.artifactOpen[path] };
+      if (this.artifactOpen[path] && this.artifactContent[path] === undefined) {
+        this.artifactContent = { ...this.artifactContent, [path]: undefined };
+        try {
+          const r = await fetch(`/api/projects/${this.projectId}/file?path=${encodeURIComponent(path)}`);
+          if (!r.ok) {
+            const d = await r.json().catch(() => ({}));
+            this.artifactContent = { ...this.artifactContent, [path]: { error: d.detail || "could not load" } };
+            return;
+          }
+          const d = await r.json();
+          const MAX = 8000;
+          const truncated = (d.content || "").length > MAX;
+          this.artifactContent = { ...this.artifactContent,
+            [path]: { content: (d.content || "").slice(0, MAX), truncated } };
+        } catch (e) {
+          this.artifactContent = { ...this.artifactContent, [path]: { error: String(e) } };
+        }
+      }
     },
     rerun() {
       // Hop back to the project's Run tab pre-filled. We pass the params via query string

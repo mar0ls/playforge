@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -35,6 +36,8 @@ class RunRequest:
     verbosity: int = 0        # 0..4 → maps to -v / -vv / etc.
     ssh_key_content: str | None = None  # injected from a Credential at run time
     vault_password_content: str | None = None  # injected from a vault_password Credential
+    become_password_content: str | None = None  # injected from a become_password Credential
+    wireguard_keys: dict | None = None  # name -> secret; written to 0600 files at run time
 
 
 @dataclass
@@ -47,26 +50,47 @@ class RunResult:
     changes: list[dict] = field(default_factory=list)  # tasks reporting changed (drift in --check)
 
 
-def _project_envvars(project_root: Path) -> dict[str, str]:
-    """Force Ansible to load the project's config and find its roles/collections.
+_CFG_KEY_RE = re.compile(r"^\s*([A-Za-z_]+)\s*=", re.MULTILINE)
 
-    ansible-runner runs ansible-playbook with cwd = `private_data_dir` (a temp dir),
-    so Ansible's default config discovery (relative to cwd) misses the project's
-    `ansible.cfg`. We point ANSIBLE_CONFIG at it and also seed common path vars,
-    so projects with `roles/` and `collections/` at the root just work.
+
+def _cfg_declares(cfg_text: str, key: str) -> bool:
+    """True if `ansible.cfg` text sets `key = …` (ignoring section headers/comments)."""
+    for line in cfg_text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith(";") or s.startswith("["):
+            continue
+        m = _CFG_KEY_RE.match(line)
+        if m and m.group(1).lower() == key.lower():
+            return True
+    return False
+
+
+def _project_envvars(project_root: Path) -> dict[str, str]:
+    """Point Ansible at project's ansible.cfg + fill path env vars the cfg omits.
+
+    ansible-runner runs with cwd=private_data_dir so config discovery misses
+    the project. Only set path env vars the cfg doesn't already declare —
+    env beats cfg, so blindly setting ANSIBLE_ROLES_PATH would silently
+    override the user's `roles_path =`.
     """
     env: dict[str, str] = {}
     cfg = project_root / "ansible.cfg"
+    cfg_text = ""
     if cfg.is_file():
         env["ANSIBLE_CONFIG"] = str(cfg)
+        try:
+            cfg_text = cfg.read_text()
+        except OSError:
+            cfg_text = ""
+
     roles_dir = project_root / "roles"
-    if roles_dir.is_dir():
+    if roles_dir.is_dir() and not _cfg_declares(cfg_text, "roles_path"):
         env["ANSIBLE_ROLES_PATH"] = str(roles_dir)
     # Project-local collections take precedence, but keep the image's baked-in
     # collections (yum/ufw/…) on the path too — otherwise a project with its own
     # collections/ dir would lose access to everything we pre-installed.
     collections_dir = project_root / "collections"
-    if collections_dir.is_dir():
+    if collections_dir.is_dir() and not _cfg_declares(cfg_text, "collections_path"):
         baked = os.environ.get("ANSIBLE_COLLECTIONS_PATH", "")
         parts = [str(collections_dir)] + ([baked] if baked else [])
         env["ANSIBLE_COLLECTIONS_PATH"] = ":".join(parts)
@@ -137,11 +161,34 @@ def _runner_kwargs(req: RunRequest, private_data_dir: Path) -> dict:
         vault_pass_file.chmod(0o600)
         cmdline_parts += ["--vault-password-file", str(vault_pass_file)]
 
+    # become (sudo) password: same pattern — a 0600 file passed via
+    # --become-password-file, so privileged tasks don't need it inline.
+    if req.become_password_content:
+        become_file = private_data_dir / "become_pass"
+        become_file.write_text(req.become_password_content)
+        become_file.chmod(0o600)
+        cmdline_parts += ["--become-password-file", str(become_file)]
+
+    # WireGuard (and similar) key material: write each secret to a 0600 file in the
+    # run's private dir and hand the playbook a `wireguard_keys` map of name->path.
+    extravars = dict(req.extra_vars or {})
+    if req.wireguard_keys:
+        wg_dir = private_data_dir / "wg_keys"
+        wg_dir.mkdir(exist_ok=True)
+        wg_paths = {}
+        for name, secret in req.wireguard_keys.items():
+            safe = "".join(c for c in name if c.isalnum() or c in "-_.") or "key"
+            kf = wg_dir / safe
+            kf.write_text(secret if secret.endswith("\n") else secret + "\n")
+            kf.chmod(0o600)
+            wg_paths[name] = str(kf)
+        extravars["wireguard_keys"] = wg_paths
+
     kwargs = {
         "private_data_dir": str(private_data_dir),
         "project_dir": str(pp.root),
         "playbook": str(playbook_path),
-        "extravars": req.extra_vars or {},
+        "extravars": extravars,
         "envvars": _project_envvars(pp.root),
         "cmdline": " ".join(cmdline_parts) if cmdline_parts else None,
         "quiet": True,                 # we read events from disk, not stdout
@@ -159,6 +206,50 @@ def _runner_kwargs(req: RunRequest, private_data_dir: Path) -> dict:
     return kwargs
 
 
+class _EventCollector:
+    """Event buckets shared by the async + sync runner paths.
+
+    Drops rescued failures on overall success (matches Ansible's recap);
+    synthesizes a pre-task failure entry when the run died before any host fired.
+    """
+    def __init__(self) -> None:
+        self.failures: list[dict] = []
+        self.changes: list[dict] = []
+        self._error_tail: list[str] = []
+
+    def capture(self, event: dict) -> None:
+        ev_type = event.get("event")
+        if ev_type in ("runner_on_failed", "runner_on_unreachable"):
+            ed = event.get("event_data", {}) or {}
+            self.failures.append({
+                "host": ed.get("host"),
+                "task": ed.get("task"),
+                "result": ed.get("res", {}) or {},
+                "stderr": event.get("stdout", ""),
+            })
+        elif ev_type == "runner_on_ok":
+            ed = event.get("event_data", {}) or {}
+            if (ed.get("res", {}) or {}).get("changed"):
+                self.changes.append({"host": ed.get("host"), "task": ed.get("task")})
+        stdout = event.get("stdout") or ""
+        if stdout and ("[ERROR]" in stdout or "ERROR!" in stdout or "fatal:" in stdout):
+            self._error_tail.append(stdout)
+            if len(self._error_tail) > 20:
+                self._error_tail.pop(0)
+
+    def finalize(self, runner_status: str) -> list[dict]:
+        if runner_status == "successful":
+            return []
+        if not self.failures and self._error_tail:
+            return [{
+                "host": None,
+                "task": "(pre-task error)",
+                "result": {"msg": "\n".join(self._error_tail).strip()},
+                "stderr": "",
+            }]
+        return self.failures
+
+
 async def run_playbook(
     req: RunRequest,
     on_event: Callable[[dict], None] | None = None,
@@ -173,75 +264,63 @@ async def run_playbook(
     """
     loop = asyncio.get_running_loop()
     private_data_dir = Path(tempfile.mkdtemp(prefix="ansible-run-"))
-    failures: list[dict] = []
-    changes: list[dict] = []
-    last_error_lines: list[str] = []  # captured for synthetic failure if no host-level fail fires
+    collector = _EventCollector()
 
-    def _capture(event: dict) -> bool:
-        """Called by ansible-runner for each event; runs in the runner thread."""
-        ev_type = event.get("event")
-        if ev_type in ("runner_on_failed", "runner_on_unreachable"):
-            ed = event.get("event_data", {}) or {}
-            failures.append({
-                "host": ed.get("host"),
-                "task": ed.get("task"),
-                "result": ed.get("res", {}),
-                "stderr": event.get("stdout", ""),
-            })
-        elif ev_type == "runner_on_ok":
-            ed = event.get("event_data", {}) or {}
-            res = ed.get("res", {}) or {}
-            if res.get("changed"):
-                changes.append({"host": ed.get("host"), "task": ed.get("task")})
-        # Capture pre-task fatal errors (e.g. role not found, parse errors).
-        # Ansible emits them as verbose stdout containing "[ERROR]" or "ERROR!".
-        stdout = event.get("stdout") or ""
-        if stdout and ("[ERROR]" in stdout or "ERROR!" in stdout or "fatal:" in stdout):
-            # Keep a small tail so we don't bloat the response.
-            last_error_lines.append(stdout)
-            if len(last_error_lines) > 20:
-                last_error_lines.pop(0)
+    def _event_handler(event: dict) -> bool:
+        collector.capture(event)
         if on_event is not None:
             loop.call_soon_threadsafe(on_event, event)
         return True
 
-    def _should_cancel():
+    def _should_cancel() -> bool:
         # ansible-runner polls this from its own thread. asyncio.Event.is_set()
         # is safe to call from any thread.
         return cancel_event is not None and cancel_event.is_set()
 
     def _run_blocking():
         kwargs = _runner_kwargs(req, private_data_dir)
-        return ansible_runner.run(event_handler=_capture, cancel_callback=_should_cancel, **kwargs)
+        return ansible_runner.run(event_handler=_event_handler, cancel_callback=_should_cancel, **kwargs)
 
     try:
         runner = await loop.run_in_executor(None, _run_blocking)
     except Exception as exc:
         _cleanup_private_dir(private_data_dir)
-        return RunResult(status="failed", rc=-1, stats={}, failures=[{"error": str(exc)}],
-                         artifacts_dir="")
-
-    # If the run failed but no host-level failure was captured, synthesize one
-    # from the pre-task error output so the UI never shows "failed, reason unknown".
-    if runner.status != "successful" and not failures and last_error_lines:
-        failures.append({
-            "host": None,
-            "task": "(pre-task error)",
-            "result": {"msg": "\n".join(last_error_lines).strip()},
-            "stderr": "",
-        })
+        return RunResult(status="failed", rc=-1, stats={},
+                         failures=[{"error": str(exc)}], artifacts_dir="")
 
     result = RunResult(
         status=runner.status,
         rc=runner.rc,
         stats=runner.stats or {},
-        failures=failures,
+        failures=collector.finalize(runner.status),
         artifacts_dir="",
-        changes=changes,
+        changes=collector.changes,
     )
-    # The runner's private dir is a tempfile that nothing reads after this point;
-    # it also held the ephemeral vault/ssh key material. Remove it so temp dirs
-    # don't pile up in the container (and secrets don't linger on disk).
+    # Sweep the tempdir — it held ephemeral vault/ssh keys for this run.
+    _cleanup_private_dir(private_data_dir)
+    return result
+
+
+def run_playbook_sync(req: RunRequest) -> RunResult:
+    """Sync runner for the agent's tool callbacks (no stream, no cancel)."""
+    private_data_dir = Path(tempfile.mkdtemp(prefix="ansible-agentrun-"))
+    collector = _EventCollector()
+
+    def _event_handler(event: dict) -> bool:
+        collector.capture(event)
+        return True
+
+    try:
+        kwargs = _runner_kwargs(req, private_data_dir)
+        runner = ansible_runner.run(event_handler=_event_handler, **kwargs)
+    except Exception as exc:
+        _cleanup_private_dir(private_data_dir)
+        return RunResult(status="failed", rc=-1, stats={},
+                         failures=[{"error": str(exc)}], artifacts_dir="")
+
+    result = RunResult(status=runner.status, rc=runner.rc, stats=runner.stats or {},
+                       failures=collector.finalize(runner.status),
+                       artifacts_dir="", changes=collector.changes)
     _cleanup_private_dir(private_data_dir)
     return result
 

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core import auth
 from app.core import credentials as cred_store
 from app.core import storage
 from app.core.runner import RunRequest, run_playbook, run_adhoc, summarize
@@ -18,10 +19,15 @@ from app.models.db import SessionLocal, Run, Credential, RunTemplate, Project, E
 async def _capture_artifacts(project_id: str, run_id: int) -> list[str]:
     """After a run, commit any files it wrote into the project repo (generated
     keys, rendered configs, fetched files) so they're versioned and visible in the
-    Files tab. Returns the changed paths. Best-effort — never fails the run."""
+    Files tab. Returns the changed paths. Best-effort — never fails the run.
+
+    If the project opted into secret protection, run-generated secrets are kept out
+    of git (added to .gitignore) instead of committed."""
+    from app.core import settings_store
+    protect = (await settings_store.get(f"project.{project_id}.protect_secrets")) == "1"
     try:
         return await asyncio.to_thread(
-            storage.commit_all, project_id, f"Run #{run_id} artifacts")
+            storage.commit_all, project_id, f"Run #{run_id} artifacts", protect_secrets=protect)
     except Exception:
         return []
 
@@ -47,15 +53,16 @@ class RunIn(BaseModel):
 
 
 async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
-    """Translate a RunIn (which may reference a template + credentials) into a
-    concrete RunRequest the runner understands, plus the resolved environment_id
-    (carried separately for run attribution — the runner doesn't need it).
+    """RunIn → RunRequest + resolved env_id. Template fills defaults; payload overrides.
 
-    Templates supply defaults; any explicit field in `payload` overrides them.
-    Credentials are loaded by ID and their secret content is read off disk and
-    threaded through. An explicit `environment_id` is validated against the
-    project; if omitted it falls back to the template's environment_id."""
+    Validates project_id exists on disk — without it a typo'd id used to write
+    a 'failed' Run row instead of returning 404.
+    """
     base = payload.model_dump()
+    try:
+        storage.paths_for(base["project_id"])
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
     template_id = base.pop("template_id")
     environment_id = base.pop("environment_id")
     credential_ids = base.pop("credential_ids")  # None means "fall back to template", [] means "explicitly none"
@@ -111,6 +118,24 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
                 if vpass:
                     base["vault_password_content"] = vpass.rstrip("\n")
                 break  # one vault password per run; first wins
+        for c in creds:
+            if c.kind == "become_password":
+                bpass = cred_store.read_secret(c.id)
+                if bpass:
+                    base["become_password_content"] = bpass.rstrip("\n")
+                break  # one become password per run; first wins
+        # WireGuard keys (and any other key material the playbook needs as a file)
+        # are written to a 0600 temp dir at run time; their paths are exposed as
+        # extra-vars `wireguard_keys` (name -> path) so a playbook can reference them.
+        wg: dict[str, str] = {}
+        for c in creds:
+            if c.kind != "wireguard_key":
+                continue
+            secret = cred_store.read_secret(c.id)   # read+decrypt once per credential
+            if secret:
+                wg[c.name] = secret
+        if wg:
+            base["wireguard_keys"] = wg
 
     return RunRequest(**base), environment_id
 
@@ -132,13 +157,13 @@ async def start_run(payload: RunIn):
     artifacts = await _capture_artifacts(req.project_id, run_id)
 
     async with SessionLocal() as session:
-        run = await session.get(Run, run_id)
-        if run is not None:
-            run.status = "canceled" if summary.get("status") == "canceled" else summary["overall"]
-            run.ended_at = datetime.utcnow()
-            run.stats_json = json.dumps(summary["hosts"])
-            run.failures_json = json.dumps(summary["failures"])
-            run.artifacts_json = json.dumps(artifacts)
+        row = await session.get(Run, run_id)
+        if row is not None:
+            row.status = "canceled" if summary.get("status") == "canceled" else summary["overall"]
+            row.ended_at = datetime.utcnow()
+            row.stats_json = json.dumps(summary["hosts"])
+            row.failures_json = json.dumps(summary["failures"])
+            row.artifacts_json = json.dumps(artifacts)
             await session.commit()
 
     return {"run_id": run_id, "artifacts": artifacts, **summary}
@@ -204,12 +229,15 @@ async def adhoc(payload: AdhocIn):
 
 @router.websocket("/ws")
 async def run_ws(ws: WebSocket):
-    """Client connects, sends a RunIn JSON, then receives events until done.
+    """Client sends a RunIn JSON, receives events; `{"action":"cancel"}` aborts.
 
-    While the run is in flight, the client may also send `{"action": "cancel"}`
-    on the same WebSocket; that flips an `asyncio.Event` the runner polls via
-    ansible-runner's cancel_callback.
+    HTTP middleware doesn't cover WS scope, so the session cookie is re-checked
+    here when auth is enabled — otherwise a LAN attacker could open a WS and
+    run any playbook with the configured credentials.
     """
+    if auth.auth_enabled() and not auth.verify_token(ws.cookies.get(auth.SESSION_COOKIE)):
+        await ws.close(code=4401)  # app-range unauthorized; reject before accept()
+        return
     await ws.accept()
     try:
         payload_dict = await ws.receive_json()

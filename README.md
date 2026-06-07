@@ -31,12 +31,32 @@ grounds every answer in your real modules and files — fully offline.
 - Ansible Vault for in-repo secrets — encrypt/decrypt/view from the UI.
 
 **Editor & dependencies**
-- Monaco editor with inline ansible-lint, structured inventory editing (INI + YAML),
-- a playbook builder (simple → advanced: handlers, loops, `serial`, `become` per task),
-- and Ansible Galaxy: install/remove roles & collections by name or from `requirements.yml`.
+- Monaco editor with inline ansible-lint, per-file commit history (View / Restore
+  past versions), structured inventory editing (INI + YAML).
+- Playbook builder (simple → advanced: handlers, loops, `serial`, `become` per task).
+- Ansible Galaxy: install/remove roles & collections by name or from `requirements.yml`.
+
+**Operations**
+- **Credential test** — probe an SSH key or sudo password against an inventory
+  before running a 30-task playbook; per-host ✓/✗ result.
+- **Ad-hoc command builder** — any module + args + host pattern in one form
+  (not just "ping all").
+- **`--limit` quick-pick** — click groups/hosts from the inventory to build the
+  Ansible `:`-separated limit string.
+- **Run artifacts** — files a run wrote into the repo are committed automatically;
+  the run-detail page previews them inline or opens them in the editor.
+- **Per-schedule timezone** — cron expressions interpret in any IANA timezone
+  (`Europe/Warsaw`, `America/New_York`, …); next-fire times honour DST.
 
 **✨ AI assistant (the part that's actually unique)**
-- **Chat** on every page (slide-out dock), aware of the current project.
+- **Chat** on every page (slide-out dock) and a full page — *one shared conversation*,
+  live-synced and remembered across refreshes.
+- **Agent mode**: a tool-using agent that actually works on a project — it inspects
+  files, writes/edits/moves them, installs collections, and can **dry-run (`--check`)
+  or run** a playbook, then read the failures and fix them. It uses the
+  self-checking layers below (it won't finish on a hallucinated module), every change
+  is a separate git commit you can revert, and each capability is opt-in
+  (read-only → "allow changes" → "allow delete / web").
 - **NL → playbook**: describe what you want, get a reviewable spec + YAML.
 - **Remediation loop**: after a failure, get a concrete fix and re-run only the
   failed hosts.
@@ -92,7 +112,7 @@ For live code reload while developing, layer the dev override (bind-mounts
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-The test suite (290+ cases) runs in CI on every push and PR — see
+The test suite (350+ cases) runs in CI on every push and PR — see
 `.github/workflows/ci.yml`.
 
 ## Design notes
