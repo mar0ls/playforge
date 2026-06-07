@@ -25,6 +25,12 @@ from app.models.db import (
 @pytest.fixture(autouse=True)
 async def _seeded(monkeypatch):
     await init_db()
+    # _build_request now asserts the project exists on disk (so we 404 a typo'd
+    # project_id instead of silently writing a 'failed' Run row). Tests historically
+    # only seeded the DB, so we also drop empty dirs for pA/pB here.
+    from app.core.config import settings as _cfg
+    for pid in ("pA", "pB"):
+        (_cfg.projects_dir / pid).mkdir(parents=True, exist_ok=True)
     async with SessionLocal() as s:
         if await s.get(Project, "pA") is None:
             s.add(Project(id="pA", name="ProjA"))

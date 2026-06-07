@@ -260,3 +260,50 @@ def test_key_in_pre_tasks_protects_disable_in_tasks():
         "        line: \"PasswordAuthentication no\"\n"
     )
     assert not _has(pr.check_text(text), "lock")
+
+
+# --- autofix: bare jinja values --------------------------------------------
+
+def test_autofix_quotes_bare_jinja():
+    bad = (
+        "- hosts: all\n"
+        "  tasks:\n"
+        "    - name: perms\n"
+        "      ansible.builtin.file:\n"
+        "        path: /home/x/.ssh/authorized_keys\n"
+        "        owner: {{ item.name }}\n"
+        "        mode: '0600'\n"
+    )
+    import yaml
+    # original is invalid...
+    try:
+        yaml.safe_load(bad); pre_ok = True
+    except yaml.YAMLError:
+        pre_ok = False
+    assert pre_ok is False
+    fixed = pr.autofix_yaml(bad)
+    assert 'owner: "{{ item.name }}"' in fixed
+    yaml.safe_load(fixed)  # now parses
+
+
+def test_autofix_leaves_valid_yaml_untouched():
+    good = "- hosts: all\n  tasks: []\n"
+    assert pr.autofix_yaml(good) == good
+
+
+def test_autofix_reply_fixes_block_from_the_wild():
+    # The exact shape the user's model produced.
+    reply = (
+        "Here you go:\n```yaml\n"
+        "- hosts: all\n  become: yes\n  tasks:\n"
+        "    - name: perms\n      ansible.builtin.file:\n"
+        "        path: /home/x/.ssh/authorized_keys\n"
+        "        owner: {{ item.name }}\n"
+        "        group: {{ item.name }}\n"
+        "        mode: '0600'\n```\n"
+    )
+    fixed = pr.autofix_reply(reply)
+    assert 'owner: "{{ item.name }}"' in fixed
+    assert 'group: "{{ item.name }}"' in fixed
+    # and the rule check now sees no YAML error
+    assert not any("invalid YAML" in f["message"] for f in pr.check_reply(fixed))

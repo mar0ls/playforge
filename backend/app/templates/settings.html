@@ -134,12 +134,14 @@
     </div>
     <div class="form-row">
       <label>Self-critique (anti-hallucination)</label>
-      <label class="row gap-xs" style="align-items: center;">
-        <input type="checkbox"
-               :checked="cfg['ai.validate_responses'] !== '0'"
-               @change="cfg['ai.validate_responses'] = $event.target.checked ? '1' : '0'" />
-        <span class="text-sm muted">Run a second LLM pass to flag unsupported claims (slower, more accurate).</span>
-      </label>
+      <div>
+        <select x-model="cfg['ai.validate_responses']" style="max-width: 14rem;">
+          <option value="auto">Auto — on for Anthropic/OpenAI only</option>
+          <option value="1">Always on</option>
+          <option value="0">Off</option>
+        </select>
+        <span class="text-sm muted" style="display:block; margin-top:.25rem;">A second LLM pass flags unsupported claims (slower, more accurate). Local models are slow, so Auto skips them.</span>
+      </div>
     </div>
     <div class="form-row">
       <label>Online module docs</label>
@@ -194,7 +196,7 @@ function settingsPage() {
       "ai.anthropic_key": false, "ai.anthropic_model": "",
       "ai.openai_key": false, "ai.openai_model": "", "ai.openai_base_url": "",
       "ai.ollama_url": "", "ai.ollama_model": "",
-      "ai.timeout_seconds": "120", "ai.validate_responses": "1", "ai.web_docs": "0",
+      "ai.timeout_seconds": "120", "ai.validate_responses": "auto", "ai.web_docs": "0",
     },
     inputs: {anthropic_key: "", openai_key: ""},
     models: {anthropic: [], openai: [], ollama: []},
@@ -272,7 +274,7 @@ function settingsPage() {
           ollama_url: this.cfg["ai.ollama_url"],
           ollama_model: this.cfg["ai.ollama_model"],
           timeout_seconds: String(this.cfg["ai.timeout_seconds"] || "120"),
-          validate_responses: this.cfg["ai.validate_responses"] || "1",
+          validate_responses: this.cfg["ai.validate_responses"] || "auto",
           web_docs: this.cfg["ai.web_docs"] || "0",
         };
         // Keys: only send if user typed something, or explicitly cleared.

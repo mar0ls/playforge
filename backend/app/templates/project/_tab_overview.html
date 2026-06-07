@@ -1,0 +1,398 @@
+  <div x-show="tab === 'overview'" x-cloak>
+    <div class="stats">
+      <div class="stat-tile accent">
+        <div class="label">Files</div>
+        <div class="value" x-text="counts.files"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Playbooks (detected)</div>
+        <div class="value" x-text="(detected.playbooks || []).length"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Inventories (detected)</div>
+        <div class="value" x-text="(detected.inventories || []).length"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Roles</div>
+        <div class="value" x-text="(detected.roles || []).length"></div>
+      </div>
+    </div>
+
+    <div class="panel-grid two">
+      <div class="card">
+        <div class="card-header">
+          <h3>Playbooks</h3>
+          <button class="btn-secondary btn-sm" @click="builder.open = !builder.open">
+            <i class="icon" data-lucide="plus"></i> New playbook
+          </button>
+        </div>
+        <template x-if="(detected.playbooks || []).length === 0">
+          <div class="muted text-sm">No playbooks detected. A playbook is a YAML file at the top level or under <code>playbooks/</code> that defines plays with <code>hosts:</code>.</div>
+        </template>
+        <ul class="tree">
+          <template x-for="pb in (detected.playbooks || [])" :key="pb">
+            <li><a href="#" @click.prevent="tab = 'run'; runForm.playbook = pb" x-text="pb"></a></li>
+          </template>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Inventories</h3>
+        <template x-if="(detected.inventories || []).length === 0">
+          <div class="muted text-sm">No inventories detected.</div>
+        </template>
+        <ul class="tree">
+          <template x-for="inv in (detected.inventories || [])" :key="inv">
+            <li><a href="#" @click.prevent="tab = 'run'; runForm.inventory = inv" x-text="inv"></a></li>
+          </template>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Dependencies (Ansible Galaxy)</h3>
+        <button class="btn-secondary btn-sm" @click="galaxyInstall()"
+                :disabled="galaxy.busy || !galaxy.requirements">
+          <i class="icon" data-lucide="download"></i>
+          <span x-text="galaxy.busy ? 'Installing…' : 'Install'"></span>
+        </button>
+      </div>
+      <template x-if="!galaxy.requirements">
+        <div class="muted text-sm">No <code>requirements.yml</code> at the project root. Add one
+          (Files tab) listing <code>roles:</code> / <code>collections:</code>, then install here.</div>
+      </template>
+      <template x-if="galaxy.requirements">
+        <div>
+          <div class="text-xs muted mb-1">From <code x-text="galaxy.requirements_path"></code></div>
+          <pre class="log" style="max-height: 8rem;" x-text="galaxy.requirements"></pre>
+        </div>
+      </template>
+      <div class="form-row mt-2" style="align-items: flex-end;">
+        <label style="flex:0 0 8rem;">Add by name
+          <select x-model="galaxy.addKind">
+            <option value="collection">collection</option>
+            <option value="role">role</option>
+          </select>
+        </label>
+        <label style="flex:1;">
+          <input type="text" x-model="galaxy.addName"
+                 :placeholder="galaxy.addKind === 'role' ? 'geerlingguy.nginx' : 'community.general'"
+                 @keydown.enter.prevent="galaxyAdd()">
+        </label>
+        <button class="btn-sm" @click="galaxyAdd()" :disabled="galaxy.busy || !galaxy.addName.trim()">
+          <i class="icon" data-lucide="plus"></i> Install
+        </button>
+      </div>
+
+      <div class="row gap-md mt-2" style="flex-wrap: wrap;">
+        <div style="flex:1; min-width: 14rem;">
+          <div class="text-xs muted">Roles installed (<span x-text="galaxy.installed.roles.length"></span>)</div>
+          <template x-if="!galaxy.installed.roles.length"><span class="text-sm muted">—</span></template>
+          <div class="row wrap gap-xs">
+            <template x-for="r in galaxy.installed.roles" :key="`role-${r}`">
+              <span class="badge" style="display:inline-flex; align-items:center; gap:.3rem;">
+                <span class="font-mono" x-text="r"></span>
+                <a href="#" @click.prevent="galaxyRemove('role', r)" title="Remove" style="color:var(--fail);">✕</a>
+              </span>
+            </template>
+          </div>
+        </div>
+        <div style="flex:1; min-width: 14rem;">
+          <div class="text-xs muted">Collections installed (<span x-text="galaxy.installed.collections.length"></span>)</div>
+          <template x-if="!galaxy.installed.collections.length"><span class="text-sm muted">—</span></template>
+          <div class="row wrap gap-xs">
+            <template x-for="c in galaxy.installed.collections" :key="`coll-${c}`">
+              <span class="badge" style="display:inline-flex; align-items:center; gap:.3rem;">
+                <span class="font-mono" x-text="c"></span>
+                <a href="#" @click.prevent="galaxyRemove('collection', c)" title="Remove" style="color:var(--fail);">✕</a>
+              </span>
+            </template>
+          </div>
+        </div>
+      </div>
+      <pre class="log mt-2" x-show="galaxy.output" x-text="galaxy.output"></pre>
+      <span class="text-sm" style="color: var(--fail);" x-show="galaxy.error" x-text="galaxy.error"></span>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Git remote</h3>
+        <div class="row gap-sm">
+          <button class="btn-secondary btn-sm" @click="gitPull()" :disabled="git.busy || !git.remote">
+            <i class="icon" data-lucide="download"></i> Pull
+          </button>
+          <button class="btn-secondary btn-sm" @click="gitPush()" :disabled="git.busy || !git.remote">
+            <i class="icon" data-lucide="upload"></i> Push
+          </button>
+        </div>
+      </div>
+      <div class="text-xs muted" x-show="git.last_commit">
+        branch <span class="font-mono" x-text="git.branch"></span> ·
+        <span x-text="git.last_commit ? git.last_commit.message : ''"></span>
+      </div>
+      <div class="form-row mt-1">
+        <label style="flex: 2;">Remote URL
+          <input type="text" x-model="git.remoteInput"
+                 placeholder="https://gitea.local/me/repo.git  or  git@host:me/repo.git">
+        </label>
+        <button class="btn-secondary btn-sm" style="align-self: flex-end;"
+                @click="gitSetRemote()" :disabled="git.busy || !git.remoteInput">Save remote</button>
+      </div>
+      <details class="mt-1">
+        <summary class="text-xs muted" style="cursor: pointer;">HTTPS auth (private repos)</summary>
+        <div class="form-row mt-1">
+          <label>Username <input type="text" x-model="git.username" placeholder="for private HTTPS"></label>
+          <label>Token / password <input type="password" x-model="git.token" placeholder="never persisted"></label>
+        </div>
+        <p class="text-xs muted">For SSH URLs, mount your host SSH agent socket (see docker-compose.yml).</p>
+      </details>
+      <pre class="log mt-2" x-show="git.output" x-text="git.output"></pre>
+      <span class="text-sm" style="color: var(--fail);" x-show="git.error" x-text="git.error"></span>
+
+      <label class="row gap-xs mt-2" style="align-items:center;" title="Keep run-generated keys/passwords out of git">
+        <input type="checkbox" x-model="protectSecrets" @change="toggleProtectSecrets()">
+        <span class="text-sm">Protect run secrets — keep generated keys/passwords (id_*, *.pem, *.ovpn, wg*.conf, generated_passwords.yml) out of git (added to .gitignore instead)</span>
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Project runbook (AI)</h3>
+        <div class="row gap-sm">
+          <button class="btn-secondary btn-sm" @click="genRunbook()" :disabled="runbook.busy || !aiEnabled">
+            <i class="icon" data-lucide="book-text"></i>
+            <span x-text="runbook.busy ? 'Generating…' : (runbook.md ? 'Regenerate' : 'Generate')"></span>
+          </button>
+          <button class="btn-sm" x-show="runbook.md" @click="saveRunbook()" :disabled="runbook.saving">
+            <i class="icon" data-lucide="save"></i>
+            <span x-text="runbook.saving ? 'Saving…' : (runbook.saved ? 'Saved ✓' : 'Save as docs/RUNBOOK.md')"></span>
+          </button>
+        </div>
+      </div>
+      <p class="text-sm muted" x-show="!aiEnabled">Enable the AI helper in Settings to generate a runbook.</p>
+      <p class="text-sm muted" x-show="aiEnabled && !runbook.md && !runbook.busy">
+        Living documentation generated from your playbooks, inventory and roles — review, then save into the project.</p>
+      <div class="md-body" style="max-height: 26rem; overflow-y: auto;" x-show="runbook.md" x-html="renderMarkdown(runbook.md)"></div>
+      <span class="text-sm" style="color: var(--fail);" x-show="runbook.error" x-text="runbook.error"></span>
+    </div>
+
+    <!-- Playbook builder (form / JSON) -->
+    <div class="card" x-show="builder.open" x-cloak>
+      <div class="card-header">
+        <h3>New playbook</h3>
+        <div class="view-toggle">
+          <button x-show="aiEnabled" :class="{active: builder.mode === 'ai'}" @click="builder.mode = 'ai'">✨ Describe (AI)</button>
+          <button :class="{active: builder.mode === 'form'}" @click="builder.mode = 'form'">Form</button>
+          <button :class="{active: builder.mode === 'json'}" @click="builder.mode = 'json'">Paste JSON</button>
+        </div>
+      </div>
+
+      <label x-show="playbookTemplates.length">Start from template
+        <select @change="loadPlaybookTemplate($event.target.value); $event.target.value=''">
+          <option value="">— blank —</option>
+          <template x-for="t in playbookTemplates" :key="t.id">
+            <option :value="t.id" x-text="`${t.category}: ${t.name}`" :title="t.description"></option>
+          </template>
+        </select>
+      </label>
+
+      <label>File path (must end with .yml or .yaml)
+        <input type="text" x-model="builder.path" required placeholder="playbooks/deploy.yml">
+      </label>
+
+      <!-- Form mode -->
+      <div x-show="builder.mode === 'form'">
+        <div class="form-row">
+          <label>Play name
+            <input type="text" x-model="builder.spec.name" placeholder="Deploy webapp">
+          </label>
+          <label>Target hosts (pattern or group)
+            <input type="text" x-model="builder.spec.hosts" list="builder-host-patterns" placeholder="all">
+            <datalist id="builder-host-patterns">
+              <template x-for="g in Object.keys(invData.groups || {})" :key="`bg-${g}`">
+                <option :value="g"></option>
+              </template>
+            </datalist>
+          </label>
+        </div>
+        <div class="row gap-md">
+          <div class="checkbox-row"><input type="checkbox" id="b-become" x-model="builder.spec.become"><label for="b-become" style="margin:0; display:inline;">become (sudo)</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="b-gf" :checked="builder.spec.gather_facts !== false" @change="builder.spec.gather_facts = $event.target.checked ? null : false"><label for="b-gf" style="margin:0; display:inline;">gather_facts</label></div>
+        </div>
+
+        <details class="mt-2">
+          <summary class="text-sm muted" style="cursor:pointer;">Advanced play options (become_user, serial, strategy, vars)</summary>
+          <div class="form-row mt-1">
+            <label>become_user
+              <input type="text" x-model="builder.spec.become_user" placeholder="root / deploy">
+            </label>
+            <label>serial (rolling: 1, 2, 30%)
+              <input type="text" x-model="builder.spec.serial" placeholder="e.g. 1 or 25%">
+            </label>
+            <label>strategy
+              <select x-model="builder.spec.strategy">
+                <option value="">(default linear)</option>
+                <option value="free">free</option>
+                <option value="host_pinned">host_pinned</option>
+                <option value="serial">serial</option>
+              </select>
+            </label>
+          </div>
+          <label>Play vars (YAML mapping)
+            <textarea x-model="builder.spec.vars_yaml" rows="3" placeholder="app_port: 8080&#10;env: prod"></textarea>
+          </label>
+        </details>
+
+        <h4 class="mt-2">Tasks</h4>
+        <template x-for="(t, i) in builder.spec.tasks" :key="i">
+          <div class="card" style="background: var(--bg-elev-2); margin-bottom: 0.5rem;">
+            <div class="form-row">
+              <label>Task name
+                <input type="text" x-model="t.name" required>
+              </label>
+              <label>Module
+                <input type="text" x-model="t.module" list="builder-modules" required placeholder="ansible.builtin.debug">
+              </label>
+            </div>
+            <label>Args (YAML mapping)
+              <textarea x-model="t.args_yaml" rows="3" placeholder="msg: Hello"></textarea>
+            </label>
+            <div class="form-row">
+              <label>Tags (comma-separated, optional)
+                <input type="text" x-model="t.tags_raw" placeholder="setup,deploy">
+              </label>
+              <label>when (optional condition)
+                <input type="text" x-model="t.when" placeholder="ansible_os_family == 'Debian'">
+              </label>
+            </div>
+            <details>
+              <summary class="text-xs muted" style="cursor:pointer;">Advanced task (become, loop, register, notify)</summary>
+              <div class="form-row mt-1">
+                <label>loop (comma list or {{ '{{ var }}' }})
+                  <input type="text" x-model="t.loop" placeholder="nginx, git  or  {{ '{{ users }}' }}">
+                </label>
+                <label>register (var name)
+                  <input type="text" x-model="t.register" placeholder="result">
+                </label>
+              </div>
+              <div class="form-row">
+                <label>notify (handler names, comma-sep)
+                  <input type="text" x-model="t.notify" placeholder="restart nginx">
+                </label>
+                <label>become_user (this task)
+                  <input type="text" x-model="t.become_user" placeholder="root">
+                </label>
+              </div>
+              <div class="checkbox-row"><input type="checkbox" :id="`t-become-${i}`" x-model="t.become"><label :for="`t-become-${i}`" style="margin:0; display:inline;">become (this task only)</label></div>
+            </details>
+            <button type="button" class="btn-secondary btn-sm danger mt-1" @click="builder.spec.tasks.splice(i, 1)">
+              <i class="icon" data-lucide="trash-2"></i> Remove task
+            </button>
+          </div>
+        </template>
+        <button type="button" class="btn-secondary btn-sm" @click="addTaskRow()">
+          <i class="icon" data-lucide="plus"></i> Add task
+        </button>
+
+        <h4 class="mt-3">Handlers <span class="text-xs muted">(triggered by notify)</span></h4>
+        <template x-for="(h, hi) in builder.spec.handlers" :key="`h-${hi}`">
+          <div class="card" style="background: var(--bg-elev-2); margin-bottom: 0.5rem;">
+            <div class="form-row">
+              <label>Handler name <input type="text" x-model="h.name" placeholder="restart nginx"></label>
+              <label>Module <input type="text" x-model="h.module" list="builder-modules" placeholder="ansible.builtin.service"></label>
+            </div>
+            <label>Args (YAML mapping)
+              <textarea x-model="h.args_yaml" rows="2" placeholder="name: nginx&#10;state: restarted"></textarea>
+            </label>
+            <button type="button" class="btn-secondary btn-sm danger" @click="builder.spec.handlers.splice(hi, 1)">
+              <i class="icon" data-lucide="trash-2"></i> Remove handler
+            </button>
+          </div>
+        </template>
+        <button type="button" class="btn-secondary btn-sm" @click="addHandlerRow()">
+          <i class="icon" data-lucide="plus"></i> Add handler
+        </button>
+
+        <datalist id="builder-modules">
+          <option value="ansible.builtin.debug"></option>
+          <option value="ansible.builtin.ping"></option>
+          <option value="ansible.builtin.command"></option>
+          <option value="ansible.builtin.shell"></option>
+          <option value="ansible.builtin.copy"></option>
+          <option value="ansible.builtin.template"></option>
+          <option value="ansible.builtin.file"></option>
+          <option value="ansible.builtin.lineinfile"></option>
+          <option value="ansible.builtin.service"></option>
+          <option value="ansible.builtin.systemd"></option>
+          <option value="ansible.builtin.apt"></option>
+          <option value="ansible.builtin.yum"></option>
+          <option value="ansible.builtin.dnf"></option>
+          <option value="ansible.builtin.package"></option>
+          <option value="ansible.builtin.user"></option>
+          <option value="ansible.builtin.group"></option>
+          <option value="ansible.builtin.git"></option>
+          <option value="ansible.builtin.uri"></option>
+          <option value="ansible.builtin.get_url"></option>
+          <option value="ansible.builtin.cron"></option>
+          <option value="ansible.builtin.setup"></option>
+        </datalist>
+      </div>
+
+      <!-- JSON mode -->
+      <div x-show="builder.mode === 'json'">
+        <label>Spec as JSON
+          <textarea x-model="builder.jsonRaw" rows="14" class="font-mono"
+                    placeholder='{ "name": "Deploy", "hosts": "web", "become": true, "tasks": [ { "name": "Install nginx", "module": "ansible.builtin.apt", "args_yaml": "name: nginx\nstate: present" } ] }'></textarea>
+        </label>
+      </div>
+
+      <!-- AI mode: describe in plain language -->
+      <div x-show="builder.mode === 'ai'">
+        <label>Describe what this playbook should do
+          <textarea x-model="builder.aiPrompt" rows="4"
+                    placeholder="e.g. Install and start nginx on Debian hosts, then deploy the app from git and restart its service"></textarea>
+        </label>
+        <div class="row gap-sm">
+          <button type="button" @click="generateFromAI()" :disabled="builder.aiBusy || !builder.aiPrompt.trim()">
+            <i class="icon" data-lucide="sparkles"></i>
+            <span x-text="builder.aiBusy ? 'Generating…' : 'Generate'"></span>
+          </button>
+          <span class="text-sm muted" x-show="builder.aiBusy">AI is drafting and self-checking module names…</span>
+          <span class="text-sm" style="color: var(--fail);" x-show="builder.aiError" x-text="builder.aiError"></span>
+        </div>
+        <p class="text-sm muted mt-1">The draft loads into the Form tab for you to review and edit before saving.</p>
+      </div>
+
+      <div class="row gap-sm mt-2">
+        <button type="button" @click="previewPlaybook()">
+          <i class="icon" data-lucide="eye"></i> Preview
+        </button>
+        <button type="button" @click="savePlaybook()" :disabled="builder.busy">
+          <i class="icon" data-lucide="save"></i>
+          <span x-text="builder.busy ? 'Saving…' : 'Save playbook'"></span>
+        </button>
+        <div class="checkbox-row"><input type="checkbox" id="b-over" x-model="builder.overwrite"><label for="b-over" style="margin:0; display:inline;">overwrite if exists</label></div>
+        <span x-show="builder.error" class="text-sm" style="color: var(--fail);" x-text="builder.error"></span>
+      </div>
+
+      <div class="lint-panel mt-2" x-show="builder.aiValidation && (builder.aiValidation.unknown_modules || []).length">
+        <h4>
+          <i class="icon" data-lucide="shield-alert"></i>
+          <span>AI self-check: modules not found by ansible-doc</span>
+        </h4>
+        <template x-for="m in ((builder.aiValidation && builder.aiValidation.unknown_modules) || [])" :key="m">
+          <div class="lint-issue severity-warning">
+            <span class="rule" x-text="m"></span>
+            <span class="desc">not in the installed module list — verify it exists / install its collection before running</span>
+            <span></span>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="builder.preview" class="mt-2">
+        <h4>Preview</h4>
+        <pre class="log" x-text="builder.preview"></pre>
+      </div>
+    </div>
+  </div>

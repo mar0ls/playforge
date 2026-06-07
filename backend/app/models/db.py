@@ -110,7 +110,8 @@ class Schedule(Base):
     name: Mapped[str] = mapped_column(String(120))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     template_id: Mapped[int] = mapped_column(Integer)  # references RunTemplate.id
-    cron_expr: Mapped[str] = mapped_column(String(64))  # 5-field crontab, UTC
+    cron_expr: Mapped[str] = mapped_column(String(64))  # 5-field crontab
+    timezone: Mapped[str] = mapped_column(String(64), default="")  # IANA name; '' = UTC
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -170,6 +171,9 @@ def _soft_migrate(sync_conn) -> None:
         sync_conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN schedule_id INTEGER")
     if "artifacts_json" not in cols:
         sync_conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN artifacts_json TEXT DEFAULT ''")
+    sched_cols = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(schedules)").fetchall()}
+    if sched_cols and "timezone" not in sched_cols:
+        sync_conn.exec_driver_sql("ALTER TABLE schedules ADD COLUMN timezone VARCHAR(64) DEFAULT ''")
 
 
 async def init_db() -> None:

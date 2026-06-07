@@ -233,6 +233,22 @@ async def get_file(project_id: str, path: str):
         raise HTTPException(404, str(e))
 
 
+@router.get("/{project_id}/file/history")
+async def file_history(project_id: str, path: str, limit: int = 30):
+    try:
+        return {"path": path, "commits": storage.file_history(project_id, path, limit=limit)}
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/{project_id}/file/at")
+async def file_at_sha(project_id: str, path: str, sha: str):
+    try:
+        return {"path": path, "sha": sha, "content": storage.file_at(project_id, path, sha)}
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+
 class FileWriteIn(BaseModel):
     path: str
     content: str
@@ -266,6 +282,56 @@ async def delete_file(project_id: str, path: str):
     except storage.StorageError as e:
         raise HTTPException(400, str(e))
     return {"deleted": path}
+
+
+class MovePathIn(BaseModel):
+    src: str
+    dst: str
+
+
+@router.post("/{project_id}/move")
+async def move_path(project_id: str, payload: MovePathIn):
+    """Rename or move a file/directory inside the project."""
+    try:
+        new_path = await asyncio.to_thread(storage.move_path, project_id, payload.src, payload.dst)
+    except storage.StorageError as e:
+        raise HTTPException(400, str(e))
+    return {"moved": payload.src, "to": new_path}
+
+
+class ProjectSettingsIn(BaseModel):
+    protect_secrets: bool | None = None
+
+
+@router.get("/{project_id}/settings")
+async def get_project_settings(project_id: str):
+    from app.core import settings_store
+    return {
+        "protect_secrets": (await settings_store.get(f"project.{project_id}.protect_secrets")) == "1",
+    }
+
+
+@router.put("/{project_id}/settings")
+async def put_project_settings(project_id: str, payload: ProjectSettingsIn):
+    from app.core import settings_store
+    if payload.protect_secrets is not None:
+        await settings_store.set(f"project.{project_id}.protect_secrets",
+                                 "1" if payload.protect_secrets else "0")
+    return await get_project_settings(project_id)
+
+
+class MkdirIn(BaseModel):
+    path: str
+
+
+@router.post("/{project_id}/dir")
+async def make_dir(project_id: str, payload: MkdirIn):
+    """Create a new (empty) directory inside the project."""
+    try:
+        created = await asyncio.to_thread(storage.create_dir, project_id, payload.path)
+    except storage.StorageError as e:
+        raise HTTPException(400, str(e))
+    return {"created": created}
 
 
 class GalaxyInstallIn(BaseModel):
@@ -318,11 +384,7 @@ async def galaxy_add(project_id: str, payload: GalaxyDepIn):
         result = await asyncio.to_thread(galaxy.add_dependency, paths.root, payload.kind, payload.name)
     except galaxy.GalaxyError as e:
         raise HTTPException(400, str(e))
-    # Newly-installed collection modules should become visible to retrieval/validation.
-    from app.core import doc_index
-    doc_index._index.cache_clear()
-    doc_index._collection_corpus.cache_clear()
-    doc_index._module_corpus.cache_clear()
+    _invalidate_module_caches()
     # Commit the requirements.yml change + any new files.
     try:
         storage.commit_all(project_id, f"Galaxy: add {payload.kind} {payload.name}")
@@ -342,15 +404,29 @@ async def galaxy_remove(project_id: str, payload: GalaxyDepIn):
         result = await asyncio.to_thread(galaxy.remove_dependency, paths.root, payload.kind, payload.name)
     except galaxy.GalaxyError as e:
         raise HTTPException(400, str(e))
-    from app.core import doc_index
-    doc_index._index.cache_clear()
-    doc_index._collection_corpus.cache_clear()
-    doc_index._module_corpus.cache_clear()
+    _invalidate_module_caches()
     try:
         storage.commit_all(project_id, f"Galaxy: remove {payload.kind} {payload.name}")
     except Exception:
         pass
     return result
+
+
+def _invalidate_module_caches() -> None:
+    """Flush every snapshot of `ansible-doc`/galaxy state after add/remove.
+
+    The RAG index, the anti-hallucination known-modules set, and the chat
+    reply cache (its key hashes a RAG-built system prompt) all need to go
+    together — leaving any one stale produces ghost or "doesn't exist"
+    modules from the user's POV.
+    """
+    from app.core import ai, ai_validate, doc_index
+    doc_index._index.cache_clear()
+    doc_index._collection_corpus.cache_clear()
+    doc_index._module_corpus.cache_clear()
+    doc_index.module_params.cache_clear()
+    ai_validate.known_modules.cache_clear()
+    ai.clear_chat_cache()
 
 
 # ---- Git remote sync -------------------------------------------------------

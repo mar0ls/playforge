@@ -1,0 +1,21 @@
+  <div x-show="tab === 'history'" x-cloak>
+    <div class="card">
+      <template x-if="history.length === 0">
+        <div class="muted text-sm">No runs recorded yet for this project.</div>
+      </template>
+      <table x-show="history.length">
+        <thead><tr><th>Status</th><th>Playbook</th><th>Tags</th><th>Started</th><th>Duration</th></tr></thead>
+        <tbody>
+          <template x-for="r in history" :key="r.id">
+            <tr class="clickable" @click="window.location.href = `/projects/${projectId}/runs/${r.id}`">
+              <td><span :class="`badge ${historyBadge(r.status)}`" x-text="r.status"></span></td>
+              <td class="font-mono text-xs" x-text="r.playbook"></td>
+              <td class="text-xs muted" x-text="r.tags"></td>
+              <td class="text-xs muted" x-text="formatTime(r.started_at)"></td>
+              <td class="text-xs muted" x-text="duration(r)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>

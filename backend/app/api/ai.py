@@ -219,6 +219,66 @@ async def chat(payload: ChatIn):
         raise HTTPException(500, f"chat failed: {e}")
 
 
+class AgentIn(BaseModel):
+    project_id: str
+    goal: str
+    allow_mutate: bool = False    # let the agent change files (write/move/mkdir/galaxy)
+    allow_confirm: bool = False   # let it delete / fetch web (destructive/external)
+    max_steps: int = 8
+
+
+def _make_get_run(project_id: str):
+    """Sync run lookup for the agent's get_run tool. Reads SQLite directly with the
+    stdlib driver — the tool runs inside the agent's own event loop, so an async
+    session (or nested asyncio.run) would blow up with 'running event loop'."""
+    import json as _json
+    import sqlite3
+    from app.core.config import settings
+
+    def _get(run_id: int) -> dict:
+        try:
+            conn = sqlite3.connect(str(settings.db_path))
+            try:
+                row = conn.execute(
+                    "SELECT id, project_id, status, playbook, failures_json FROM runs WHERE id = ?",
+                    (run_id,)).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            return {"error": f"db error: {e}"}
+        if row is None or row[1] != project_id:
+            return {"error": "run not found"}
+        return {"id": row[0], "status": row[2], "playbook": row[3],
+                "failures": _json.loads(row[4] or "[]")}
+    return _get
+
+
+@router.post("/agent")
+async def agent(payload: AgentIn):
+    """Run the tool-using agent against a project. Read-only tools always work;
+    mutating/destructive tools require the matching opt-in flag."""
+    if not await ai.ai_enabled():
+        raise HTTPException(503, "AI helper not configured. Go to Settings → AI helper to set it up.")
+    try:
+        storage.paths_for(payload.project_id)
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+    from app.core import agent_tools
+    from app.core.agent import READ, MUTATE, CONFIRM
+    tools = agent_tools.build_tools(payload.project_id, get_run=_make_get_run(payload.project_id))
+    levels = {READ}
+    if payload.allow_mutate:
+        levels.add(MUTATE)
+    if payload.allow_confirm:
+        levels.add(CONFIRM)
+    try:
+        return await ai.run_project_agent(payload.goal, tools, allowed_levels=levels,
+                                          max_steps=max(1, min(payload.max_steps, 15)))
+    except Exception as e:
+        raise HTTPException(500, f"agent failed: {e}")
+
+
 class NarratePlanIn(BaseModel):
     changes: list[dict] = []
     playbook: str = ""

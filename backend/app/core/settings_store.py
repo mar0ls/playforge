@@ -43,9 +43,10 @@ SPECS: dict[str, SettingSpec] = {
     # big model), which feels like "the assistant is thinking forever".
     "ai.ollama_keep_alive": SettingSpec(env_var="OLLAMA_KEEP_ALIVE", default="30m"),
     "ai.timeout_seconds":  SettingSpec(default="300"),  # local models can be slow; give them room
-    # Off by default: the LLM self-critique doubles latency (a 2nd model call) and
-    # is unreliable on small local models. Strong-model users can turn it on.
-    "ai.validate_responses": SettingSpec(default="0"),  # "1"/"0"
+    # Auto by default: self-critique (a 2nd model call) runs only for strong cloud
+    # providers (Anthropic/OpenAI). It doubles latency and is unreliable on small
+    # local models, so those stay off unless the user forces "1".
+    "ai.validate_responses": SettingSpec(default="auto"),  # "1"=on / "0"=off / "auto"=cloud only
     # Off by default (air-gap friendly): when a module isn't installed locally,
     # look up its parameters on docs.ansible.com. Only enable if the box has internet.
     "ai.web_docs": SettingSpec(env_var="ANSIBLE_GUI_WEB_DOCS", default="0"),  # "1"/"0"

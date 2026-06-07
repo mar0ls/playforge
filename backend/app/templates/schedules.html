@@ -19,14 +19,29 @@
         <label>Name
           <input type="text" x-model="form.name" required placeholder="Nightly deploy">
         </label>
-        <label>Cron (5-field, UTC)
+        <label>Cron (5-field)
           <input type="text" x-model="form.cron_expr" required placeholder="0 3 * * *">
+        </label>
+        <label>Timezone
+          <input type="text" x-model="form.timezone" list="tz-list"
+                 placeholder="(empty = UTC) e.g. Europe/Warsaw">
+          <datalist id="tz-list">
+            <option value="UTC"></option>
+            <option value="Europe/Warsaw"></option>
+            <option value="Europe/London"></option>
+            <option value="Europe/Berlin"></option>
+            <option value="America/New_York"></option>
+            <option value="America/Los_Angeles"></option>
+            <option value="Asia/Tokyo"></option>
+            <option value="Asia/Singapore"></option>
+            <option value="Australia/Sydney"></option>
+          </datalist>
         </label>
       </div>
       <p class="muted text-xs" style="margin-top:-0.5rem;">
-        Examples: <code>0 3 * * *</code> (daily 03:00 UTC),
+        Examples: <code>0 3 * * *</code> (daily 03:00 in the chosen TZ),
         <code>*/15 * * * *</code> (every 15 min),
-        <code>0 9 * * 1-5</code> (weekdays 09:00).
+        <code>0 9 * * 1-5</code> (weekdays 09:00). Leave timezone empty for UTC.
       </p>
       <label>Project
         <select x-model="form.project_id" required @change="onProjectChange()">
@@ -76,6 +91,7 @@
             <span :class="`badge ${s.enabled ? 'ok' : 'muted'}`" x-text="s.enabled ? 'enabled' : 'disabled'"></span>
             <strong x-text="s.name"></strong>
             <code class="font-mono text-xs" x-text="s.cron_expr"></code>
+            <span class="text-xs muted" x-text="s.timezone ? `(${s.timezone})` : '(UTC)'"></span>
           </div>
           <div class="text-sm muted" x-text="`project=${s.project_id} template=${s.template_id}`"></div>
           <div class="text-xs muted">
@@ -98,7 +114,7 @@
 function schedulesPage() {
   return {
     schedules: [], projects: [], allTemplates: {}, showForm: false, saving: false, editingId: null,
-    form: { name: "", cron_expr: "0 3 * * *", project_id: "", template_id: 0, enabled: true },
+    form: { name: "", cron_expr: "0 3 * * *", timezone: "", project_id: "", template_id: 0, enabled: true },
 
     get templatesForProject() {
       return this.allTemplates[this.form.project_id] || [];
@@ -106,7 +122,7 @@ function schedulesPage() {
 
     resetForm() {
       this.editingId = null;
-      this.form = { name: "", cron_expr: "0 3 * * *", project_id: "", template_id: 0, enabled: true };
+      this.form = { name: "", cron_expr: "0 3 * * *", timezone: "", project_id: "", template_id: 0, enabled: true };
     },
     formatTime(iso) { return iso ? new Date(iso).toLocaleString() : ""; },
 
@@ -136,8 +152,8 @@ function schedulesPage() {
 
     edit(s) {
       this.editingId = s.id;
-      this.form = { name: s.name, cron_expr: s.cron_expr, project_id: s.project_id,
-                     template_id: s.template_id, enabled: s.enabled };
+      this.form = { name: s.name, cron_expr: s.cron_expr, timezone: s.timezone || "",
+                     project_id: s.project_id, template_id: s.template_id, enabled: s.enabled };
       this.onProjectChange();
       this.showForm = true;
     },

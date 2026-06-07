@@ -50,7 +50,7 @@ class CredOut(BaseModel):
 def _to_out(c: Credential) -> CredOut:
     return CredOut(
         id=c.id, kind=c.kind, name=c.name, description=c.description,
-        public_part=c.public_part, has_secret=cred_store.secret_path(c.id).is_file(),
+        public_part=c.public_part, has_secret=cred_store.has_secret(c.id),
         created_at=c.created_at, updated_at=c.updated_at,
     )
 
@@ -107,3 +107,102 @@ async def delete_credential(cred_id: int):
         await session.commit()
     cred_store.delete_secret(cred_id)
     return {"deleted": cred_id}
+
+
+class CredTestIn(BaseModel):
+    project_id: str
+    inventory: str = ""        # rel path; falls back to project default
+    host_pattern: str = "all"  # which hosts to probe — usually a group or single host
+    become: bool = False       # also exercise the become password if one is on this cred id
+
+
+@router.post("/{cred_id}/test")
+async def test_credential(cred_id: int, payload: CredTestIn):
+    """Probe a credential via a one-task playbook. Per-host ✓/✗ for the UI."""
+    from pathlib import Path as _Path
+    import tempfile as _tempfile
+
+    from app.core import storage
+    from app.core.runner import RunRequest, run_playbook
+
+    async with SessionLocal() as session:
+        c = await session.get(Credential, cred_id)
+    if c is None:
+        raise HTTPException(404, "credential not found")
+    try:
+        storage.paths_for(payload.project_id)
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+    secret = cred_store.read_secret(cred_id)
+    if not secret:
+        raise HTTPException(400, "credential has no stored secret")
+
+    # Use the playbook runner (not run_adhoc) — it already wires up every
+    # credential kind; ad-hoc would need its own credential plumbing.
+    tmp = _Path(_tempfile.mkdtemp(prefix="cred-test-"))
+    playbook_rel = "_cred_probe.yml"
+    paths = storage.paths_for(payload.project_id)
+    probe_path = paths.root / playbook_rel
+    try:
+        if c.kind == "ssh_key":
+            probe_path.write_text(
+                "---\n"
+                f"- hosts: {payload.host_pattern}\n"
+                "  gather_facts: false\n"
+                "  tasks:\n"
+                "    - name: probe ssh\n"
+                "      ansible.builtin.ping:\n"
+            )
+            req = RunRequest(project_id=payload.project_id, playbook=playbook_rel,
+                             inventory=payload.inventory, ssh_key_content=secret)
+        elif c.kind == "become_password":
+            probe_path.write_text(
+                "---\n"
+                f"- hosts: {payload.host_pattern}\n"
+                "  gather_facts: false\n"
+                "  become: true\n"
+                "  tasks:\n"
+                "    - name: probe sudo\n"
+                "      ansible.builtin.command: id\n"
+                "      changed_when: false\n"
+            )
+            req = RunRequest(project_id=payload.project_id, playbook=playbook_rel,
+                             inventory=payload.inventory,
+                             become_password_content=secret.rstrip("\n"))
+        elif c.kind == "vault_password":
+            # No standalone probe — vault passwords only validate against a file.
+            return {"kind": c.kind, "ok": None,
+                    "note": "vault passwords are validated when decrypting an encrypted file. "
+                            "Open a vault-encrypted file in the editor and try Decrypt."}
+        else:
+            return {"kind": c.kind, "ok": None,
+                    "note": f"no probe defined for credential kind '{c.kind}'"}
+
+        try:
+            result = await run_playbook(req)
+        finally:
+            try:
+                probe_path.unlink()
+            except OSError:
+                pass
+
+        stats = result.stats or {}
+        host_status: dict[str, str] = {}
+        for host in (stats.get("ok") or {}):
+            host_status[host] = "ok"
+        for host in (stats.get("unreachable") or {}):
+            host_status[host] = "unreachable"
+        for host in (stats.get("failures") or {}):
+            host_status[host] = "failed"
+        ok = bool(host_status) and all(s == "ok" for s in host_status.values())
+        return {"kind": c.kind, "ok": ok, "hosts": host_status,
+                "failures": [{"host": f.get("host"),
+                              "msg": (f.get("result") or {}).get("msg") or f.get("error") or ""}
+                             for f in result.failures]}
+    finally:
+        try:
+            import shutil as _shutil
+            _shutil.rmtree(tmp, ignore_errors=True)
+        except Exception:
+            pass

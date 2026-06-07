@@ -194,10 +194,10 @@ def _check_play(play, idx: int, project_root: Path | None = None, *, require_hos
 
     # --- firewall lockout: UFW default-deny incoming without an SSH allow rule ---
     ufw_default_deny = any(
-        (_ufw_args(t) is not None and _ufw_sets_default_deny_incoming(_ufw_args(t)))
+        ((ua := _ufw_args(t)) is not None and _ufw_sets_default_deny_incoming(ua))
         for t in ordered if isinstance(t, dict))
     ufw_allows_ssh = any(
-        (_ufw_args(t) is not None and _ufw_allows_ssh(_ufw_args(t)))
+        ((ua := _ufw_args(t)) is not None and _ufw_allows_ssh(ua))
         for t in ordered if isinstance(t, dict))
     if ufw_default_deny and not ufw_allows_ssh:
         findings.append(_finding(
@@ -252,6 +252,39 @@ def check_text(text: str, project_root: Path | None = None) -> list[dict]:
     except yaml.YAMLError as e:
         return [_finding("error", f"invalid YAML: {str(e).splitlines()[0]}")]
     return check_doc(doc, project_root)
+
+
+# A `key: {{ jinja }}` value with the `{{` unquoted is invalid YAML (the `{` starts
+# a flow mapping). This is the single most common mistake models make in Ansible
+# YAML, so we fix it deterministically rather than hoping a retry gets it right.
+_BARE_JINJA_RE = re.compile(r'^(\s*[\w.-]+:\s+)(\{\{.*\}\})\s*$')
+
+
+def autofix_yaml(text: str) -> str:
+    """Best-effort repair of common model YAML mistakes. Currently: quote bare
+    `key: {{ var }}` values. Only rewrites lines that are still valid after the
+    change; returns the text unchanged if it already parses."""
+    try:
+        yaml.safe_load(text)
+        return text  # already valid — don't touch it
+    except yaml.YAMLError:
+        pass
+    out = []
+    for line in text.splitlines():
+        m = _BARE_JINJA_RE.match(line)
+        if m:
+            out.append(f'{m.group(1)}"{m.group(2)}"')
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def autofix_reply(reply: str) -> str:
+    """Apply `autofix_yaml` to every ```yaml block in an assistant reply."""
+    def _repl(m):
+        fence, body = m.group(1), m.group(2)
+        return f"{fence}{autofix_yaml(body)}```"
+    return re.sub(r"(```(?:ya?ml)?\s*\n)(.*?)```", _repl, reply or "", flags=re.DOTALL)
 
 
 def check_reply(reply: str, project_root: Path | None = None) -> list[dict]:
