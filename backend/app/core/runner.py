@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterator, Callable
+from typing import Callable
 
 import ansible_runner
 

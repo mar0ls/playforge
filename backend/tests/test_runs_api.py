@@ -15,7 +15,7 @@ pytest.importorskip("cryptography")
 from fastapi import HTTPException
 
 from app.api import runs as runs_api
-from app.api.runs import RunIn, start_run, list_runs, _build_request
+from app.api.runs import RunIn, PreflightIn, start_run, list_runs, run_detail, preflight, _build_request
 from app.core.runner import RunResult
 from app.models.db import (
     Environment, Project, RunTemplate, Run, SessionLocal, init_db,
@@ -143,3 +143,120 @@ async def test_list_runs_null_environment(_seeded):
     row = next(r for r in rows if r["id"] == out["run_id"])
     assert row["environment_id"] is None
     assert row["environment_name"] is None
+
+
+async def test_run_detail_by_id(_seeded):
+    out = await start_run(RunIn(project_id="pA", playbook="site.yml"))
+    d = await run_detail(out["run_id"])
+    assert d["id"] == out["run_id"]
+    assert d["project_id"] == "pA"
+    assert d["playbook"] == "site.yml"
+    assert d["status"] in ("ok", "successful")
+
+
+async def test_run_detail_missing_404(_seeded):
+    with pytest.raises(HTTPException) as exc:
+        await run_detail(999999)
+    assert exc.value.status_code == 404
+
+
+async def test_preview_returns_diagnostics_on_known_error(monkeypatch, _seeded):
+    async def _fake_failed(req, on_event=None, cancel_event=None):
+        return RunResult(
+            status="failed",
+            rc=2,
+            stats={"failures": {"localhost": 1}},
+            failures=[{
+                "host": "localhost",
+                "task": "Gathering Facts",
+                "result": {"msg": "python3-apt must be installed to use check mode"},
+                "stderr": "",
+            }],
+            artifacts_dir="/tmp/none",
+        )
+
+    monkeypatch.setattr(runs_api, "run_playbook", _fake_failed)
+    out = await runs_api.preview_run(RunIn(project_id="pA", playbook="site.yml", check=True))
+    codes = {d["code"] for d in out.get("diagnostics") or []}
+    assert "missing_python3_apt" in codes
+
+
+async def test_preflight_controller_missing_required(monkeypatch, _seeded):
+    # Pretend every binary is missing and no target probing is requested.
+    monkeypatch.setattr(runs_api.shutil, "which", lambda _name: None)
+
+    result = await preflight(PreflightIn(project_id="pA", include_targets=False, check=True))
+    assert result["ok"] is False
+    assert result["controller"]["ok"] is False
+    missing = {m["name"] for m in result["controller"]["missing_required"]}
+    # Only true controller-must-haves are flagged. `sudo` runs on the target,
+    # `apt` likewise; they are informational, not blockers.
+    assert "ansible" in missing
+    assert "ansible-playbook" in missing
+    assert "sudo" not in missing
+    assert "apt" not in missing
+
+
+async def test_preflight_passes_when_optional_tools_missing(monkeypatch, _seeded):
+    """A slim controller image without sudo/python3-apt should still preflight clean
+    when ansible + ansible-playbook exist (typical for remote-only playbooks)."""
+    def _which(name):
+        return f"/usr/bin/{name}" if name in {"ansible", "ansible-playbook"} else None
+    monkeypatch.setattr(runs_api.shutil, "which", _which)
+    monkeypatch.setattr(runs_api.importlib.util, "find_spec", lambda _name: None)
+
+    result = await preflight(PreflightIn(project_id="pA", include_targets=False, check=True))
+    assert result["controller"]["ok"] is True
+    assert result["ok"] is True
+
+
+@pytest.mark.parametrize("msg, expected_code", [
+    ("sudo: not found", "missing_sudo"),
+    ("iptables v1.8.7: Permission denied (you must be root)", "firewall_permission_denied"),
+    ("Failed to connect to the host via ssh: ssh: connect to host 10.0.0.5 port 22: Connection refused",
+     "host_unreachable"),
+    ("Permission denied (publickey,password).", "ssh_auth_failed"),
+    ("ssh: Could not resolve hostname db1: Name or service not known", "dns_resolution_failed"),
+    ("write error: No space left on device", "disk_full"),
+    ("E: Unable to locate package supadupa", "package_not_found"),
+    ("couldn't resolve module/action 'community.general.thing'. This often indicates a misspelling, missing collection, or incorrect module path.",
+     "missing_collection"),
+    ("Missing sudo password", "become_password_required"),
+    ("Attempting to decrypt but no vault secrets found", "vault_password_required"),
+])
+async def test_diagnose_failure_rules(msg, expected_code):
+    """Each common Ansible failure signature lights its diagnostic code."""
+    out = runs_api._diagnose_failures(
+        [{"host": "h1", "task": "Some task", "result": {"msg": msg}, "stderr": ""}],
+        check_mode=False,
+    )
+    codes = {d["code"] for d in out}
+    assert expected_code in codes, f"got {codes}"
+
+
+async def test_diagnose_failures_deduplicates_same_code_per_host_task():
+    f = {"host": "h1", "task": "T", "result": {"msg": "Missing sudo password. Missing sudo password"}}
+    out = runs_api._diagnose_failures([f], check_mode=False)
+    assert len([d for d in out if d["code"] == "become_password_required"]) == 1
+
+
+async def test_run_ws_summary_includes_diagnostics(_seeded):
+    """The WebSocket summary contract carries the same `diagnostics` field as HTTP."""
+    from starlette.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/runs/ws") as ws:
+            ws.send_json({"project_id": "pA", "playbook": "site.yml"})
+            summary = None
+            while True:
+                ev = ws.receive_json()
+                if ev.get("event") == "summary":
+                    summary = ev
+                    break
+                if ev.get("event") == "error":
+                    raise AssertionError(f"ws errored: {ev}")
+    assert summary is not None
+    assert "diagnostics" in summary
+    assert isinstance(summary["diagnostics"], list)
+    assert "run_id" in summary

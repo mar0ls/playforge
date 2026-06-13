@@ -82,7 +82,29 @@ app.include_router(environments_api.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "data_dir": str(settings.data_dir)}
+    """Liveness + DB ping. Returns 503 when the database is unreachable so
+    `docker compose`/k8s healthchecks can restart the container automatically."""
+    from sqlalchemy import text
+    from app.models.db import SessionLocal as _SL
+
+    db_ok = True
+    db_error = ""
+    try:
+        async with _SL() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as e:
+        db_ok = False
+        db_error = str(e)[:200]
+
+    payload = {
+        "status": "ok" if db_ok else "degraded",
+        "data_dir": str(settings.data_dir),
+        "db": "ok" if db_ok else "error",
+    }
+    if not db_ok:
+        payload["db_error"] = db_error
+        return JSONResponse(payload, status_code=503)
+    return payload
 
 
 def _set_session(resp, request: Request):

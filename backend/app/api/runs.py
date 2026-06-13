@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
+import shutil
+import subprocess
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -50,6 +53,16 @@ class RunIn(BaseModel):
     environment_id: int | None = None
     # None = fall back to the template's credentials. An explicit list (even []) overrides.
     credential_ids: list[int] | None = None
+
+
+class PreflightIn(BaseModel):
+    project_id: str
+    inventory: str = ""
+    host_pattern: str = "all"
+    # If true, include checks specific to --check mode (notably python-apt).
+    check: bool = False
+    # Network probes touch target hosts; callers can disable for controller-only checks.
+    include_targets: bool = True
 
 
 async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
@@ -140,6 +153,265 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
     return RunRequest(**base), environment_id
 
 
+def _error_text(f: dict) -> str:
+    res = f.get("result") if isinstance(f, dict) else {}
+    if not isinstance(res, dict):
+        res = {}
+    parts = [
+        str(res.get("msg") or ""),
+        str(f.get("error") or ""),
+        str(f.get("stderr") or ""),
+    ]
+    return "\n".join(p for p in parts if p).lower()
+
+
+# Each rule maps a lowercase error signature to a stable diagnostic code + hint.
+# Phrased for non-expert operators: explain the cause first, then the fix.
+# When adding a rule, prefer literal substrings from the actual Ansible/SSH/apt
+# error text — these signatures hold across versions far better than regexes.
+_DIAGNOSTIC_RULES: list[dict] = [
+    {
+        "code": "missing_sudo",
+        "severity": "error",
+        "match": lambda text, task: "sudo: not found" in text,
+        "hint": "Controller or target lacks sudo. Install sudo and ensure the runtime user can elevate (become).",
+    },
+    {
+        "code": "missing_python3_apt",
+        "severity": "error",
+        "match": lambda text, task: "python3-apt must be installed to use check mode" in text,
+        "hint": "Apt tasks in --check need python3-apt on the executing host. Install python3-apt or avoid check mode for that task.",
+    },
+    {
+        "code": "ssh_restart_lockout",
+        "severity": "warning",
+        "match": lambda text, task: (
+            "connection refused" in text
+            and "restart" in task.lower()
+            and "ssh" in task.lower()
+        ),
+        "hint": "SSH became unreachable after restart. Use serial: 1 + wait_for_connection and validate sshd config before restarting.",
+    },
+    {
+        "code": "firewall_permission_denied",
+        "severity": "warning",
+        "match": lambda text, task: (
+            "could not fetch rule set generation id" in text
+            or ("iptables" in text and "permission denied" in text)
+        ),
+        "hint": "Firewall task failed due to missing kernel/netfilter privileges. In Docker labs run targets with NET_ADMIN (and usually NET_RAW) or skip UFW tasks.",
+    },
+    {
+        "code": "host_unreachable",
+        "severity": "error",
+        "match": lambda text, task: (
+            "no route to host" in text
+            or "connection timed out" in text
+            or "host key verification failed" in text
+            or "ssh: connect to host" in text
+            or "failed to connect to the host via ssh" in text
+        ),
+        "hint": "Target host could not be reached over SSH. Check that the host is up, the inventory IP/port is right, and that the controller can SSH to it (host key + firewall).",
+    },
+    {
+        "code": "ssh_auth_failed",
+        "severity": "error",
+        "match": lambda text, task: (
+            "permission denied (publickey" in text
+            or "permission denied (password" in text
+            or "no authentication methods could be loaded" in text
+        ),
+        "hint": "SSH authentication failed. Verify the credential (key or password) is attached to this run, that ansible_user matches the target account, and that the key is authorized on the target.",
+    },
+    {
+        "code": "dns_resolution_failed",
+        "severity": "error",
+        "match": lambda text, task: (
+            "name or service not known" in text
+            or "could not resolve hostname" in text
+            or "temporary failure in name resolution" in text
+        ),
+        "hint": "DNS lookup for the target failed. Use an IP in the inventory, or make sure the controller can resolve the host (check /etc/hosts or DNS).",
+    },
+    {
+        "code": "disk_full",
+        "severity": "error",
+        "match": lambda text, task: "no space left on device" in text,
+        "hint": "The target ran out of disk space. Free space (logs, caches, old kernels) or expand the volume before retrying.",
+    },
+    {
+        "code": "package_not_found",
+        "severity": "error",
+        "match": lambda text, task: (
+            "unable to locate package" in text
+            or "no package matching" in text
+            or "no match for argument" in text
+            or "could not find a match" in text
+        ),
+        "hint": "The package manager can't find the requested package. Check the package name for typos, refresh the cache (apt update / dnf makecache), or enable the right repository.",
+    },
+    {
+        "code": "missing_collection",
+        "severity": "error",
+        "match": lambda text, task: (
+            "couldn't resolve module/action" in text
+            or "couldn't resolve module" in text
+            or ("the collection" in text and "was not found" in text)
+        ),
+        "hint": "Ansible can't find the module's collection. Install it with ansible-galaxy collection install <name> (or add it to requirements.yml and use the Galaxy tab).",
+    },
+    {
+        "code": "become_password_required",
+        "severity": "error",
+        "match": lambda text, task: (
+            "missing sudo password" in text
+            or "incorrect sudo password" in text
+            or ("a password is required" in text and "sudo" in text)
+        ),
+        "hint": "Sudo on the target needs a password. Attach a 'become_password' credential to this run (or configure NOPASSWD on the target for the runtime user).",
+    },
+    {
+        "code": "vault_password_required",
+        "severity": "error",
+        "match": lambda text, task: (
+            "attempting to decrypt but no vault secrets found" in text
+            or ("decryption failed" in text and "vault" in text)
+        ),
+        "hint": "The playbook uses Ansible Vault but no vault password was supplied. Attach a 'vault_password' credential to this run.",
+    },
+]
+
+
+def _diagnose_failures(failures: list[dict], *, check_mode: bool) -> list[dict]:
+    """Map common Ansible failures to actionable hints shown in API responses."""
+    findings: list[dict] = []
+    for f in (failures or []):
+        text = _error_text(f)
+        task = str((f or {}).get("task") or "")
+        host = (f or {}).get("host")
+        for rule in _DIAGNOSTIC_RULES:
+            try:
+                hit = bool(rule["match"](text, task))
+            except Exception:
+                hit = False
+            if hit:
+                findings.append({
+                    "code": rule["code"],
+                    "severity": rule["severity"],
+                    "host": host,
+                    "task": task,
+                    "hint": rule["hint"],
+                })
+
+    # Keep deterministic, deduplicated diagnostics for stable UI rendering/tests.
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for d in findings:
+        key = (d.get("code"), d.get("host"), d.get("task"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(d)
+
+    # If nothing matched and the run failed in check mode, return a generic nudge.
+    if not deduped and check_mode and failures:
+        deduped.append({
+            "code": "check_mode_failure",
+            "severity": "info",
+            "host": None,
+            "task": "",
+            "hint": "Preview failed in --check mode. Re-run with /api/runs/preflight to verify controller and target prerequisites.",
+        })
+    return deduped
+
+
+def _controller_preflight(check_mode: bool) -> dict:
+    checks: list[dict] = []
+
+    def add_bin(name: str, *, required: bool = True, hint: str = "") -> None:
+        ok = shutil.which(name) is not None
+        checks.append({"kind": "binary", "name": name, "ok": ok, "required": required, "hint": hint})
+
+    def add_module(name: str, *, required: bool = True, hint: str = "") -> None:
+        ok = importlib.util.find_spec(name) is not None
+        checks.append({"kind": "python_module", "name": name, "ok": ok, "required": required, "hint": hint})
+
+    def add_apt_module_probe() -> None:
+        """`python3-apt` can exist only in system Python, while the app runs in /usr/local.
+
+        Checking importlib on the app interpreter alone would report a false negative.
+        Probe common controller realities in order:
+        1) import in current interpreter,
+        2) import with /usr/bin/python3,
+        3) dpkg package presence fallback.
+        """
+        hint = "Apt module in --check mode requires python3-apt on the executing host."
+        ok = importlib.util.find_spec("apt") is not None
+        note = ""
+
+        if not ok and shutil.which("/usr/bin/python3"):
+            try:
+                probe = subprocess.run(
+                    ["/usr/bin/python3", "-c", "import apt"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                if probe.returncode == 0:
+                    ok = True
+                    note = "python3-apt available via /usr/bin/python3"
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        if not ok and shutil.which("dpkg-query"):
+            try:
+                probe = subprocess.run(
+                    ["dpkg-query", "-W", "-f=${Status}", "python3-apt"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                if probe.returncode == 0 and "installed" in (probe.stdout or ""):
+                    ok = True
+                    note = "python3-apt package installed (dpkg)"
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        # Optional on the controller: only matters when an apt task runs against
+        # localhost in --check mode. Most playbooks target remote hosts, where
+        # python3-apt lives on the target (not here).
+        item = {
+            "kind": "python_module",
+            "name": "apt",
+            "ok": ok,
+            "required": False,
+            "hint": hint,
+        }
+        if note:
+            item["note"] = note
+        checks.append(item)
+
+    add_bin("ansible", hint="Install ansible-core in the app container/host.")
+    add_bin("ansible-playbook", hint="Install ansible-core in the app container/host.")
+    # `sudo` runs on the target, not on the controller — keep it informational
+    # so a slim controller image doesn't fail preflight for a remote-only playbook.
+    add_bin("sudo", required=False,
+            hint="Only needed on the controller for localhost tasks using become: yes.")
+    add_bin("sshpass", required=False, hint="Needed only for password-based SSH auth.")
+    add_module("passlib", required=False, hint="Required by password_hash filter in some playbooks.")
+    if check_mode:
+        add_apt_module_probe()
+
+    failed_required = [c for c in checks if c["required"] and not c["ok"]]
+    return {
+        "ok": not failed_required,
+        "checks": checks,
+        "missing_required": [{"name": c["name"], "kind": c["kind"], "hint": c["hint"]} for c in failed_required],
+    }
+
+
 @router.post("")
 async def start_run(payload: RunIn):
     """Run a playbook synchronously (waits for completion). For live output use the WebSocket."""
@@ -155,6 +427,7 @@ async def start_run(payload: RunIn):
     result = await run_playbook(req)
     summary = summarize(result)
     artifacts = await _capture_artifacts(req.project_id, run_id)
+    diagnostics = _diagnose_failures(summary.get("failures") or [], check_mode=bool(req.check))
 
     async with SessionLocal() as session:
         row = await session.get(Run, run_id)
@@ -166,7 +439,7 @@ async def start_run(payload: RunIn):
             row.artifacts_json = json.dumps(artifacts)
             await session.commit()
 
-    return {"run_id": run_id, "artifacts": artifacts, **summary}
+    return {"run_id": run_id, "artifacts": artifacts, "diagnostics": diagnostics, **summary}
 
 
 @router.get("")
@@ -198,6 +471,80 @@ async def list_runs(project_id: str | None = None, status: str | None = None,
     ]
 
 
+@router.get("/{run_id}")
+async def run_detail(run_id: int):
+    """Global run detail by id (without project prefix), useful for /runs views and API tooling."""
+    async with SessionLocal() as session:
+        row = (await session.execute(
+            select(Run, Project.name, Environment.name)
+            .join(Project, Run.project_id == Project.id)
+            .outerjoin(Environment, Run.environment_id == Environment.id)
+            .where(Run.id == run_id)
+        )).first()
+    if row is None:
+        raise HTTPException(404, "run not found")
+    run, pname, ename = row
+    failures = json.loads(run.failures_json or "[]")
+    return {
+        "id": run.id,
+        "project_id": run.project_id,
+        "project_name": pname,
+        "playbook": run.playbook,
+        "inventory": run.inventory,
+        "tags": run.tags,
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+        "stats": json.loads(run.stats_json or "{}"),
+        "failures": failures,
+        "artifacts": json.loads(run.artifacts_json or "[]"),
+        "diagnostics": _diagnose_failures(failures, check_mode=False),
+        "template_id": run.template_id,
+        "environment_id": run.environment_id,
+        "environment_name": ename,
+    }
+
+
+@router.post("/preflight")
+async def preflight(payload: PreflightIn):
+    """Validate controller prerequisites and optionally probe target reachability.
+
+    This endpoint is side-effect free: it does not create a Run history row.
+    """
+    try:
+        storage.paths_for(payload.project_id)
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+    controller = _controller_preflight(payload.check)
+    targets: dict | None = None
+    if payload.include_targets:
+        try:
+            probe = await run_adhoc(
+                payload.project_id,
+                payload.host_pattern,
+                "ping",
+                "",
+                payload.inventory,
+            )
+            targets = summarize(probe)
+        except Exception as e:
+            targets = {
+                "overall": "failed",
+                "status": "failed",
+                "rc": -1,
+                "hosts": {},
+                "failures": [{"host": None, "task": "adhoc ping", "result": {"msg": str(e)}}],
+            }
+
+    overall_ok = controller["ok"] and (targets is None or targets.get("overall") == "ok")
+    return {
+        "ok": overall_ok,
+        "controller": controller,
+        "targets": targets,
+    }
+
+
 @router.post("/preview")
 async def preview_run(payload: RunIn):
     """Dry-run in check mode: report which tasks would change on which hosts,
@@ -207,9 +554,10 @@ async def preview_run(payload: RunIn):
     req.syntax_check = False
     result = await run_playbook(req)
     summary = summarize(result)
+    diagnostics = _diagnose_failures(summary.get("failures") or [], check_mode=True)
     return {"overall": summary["overall"], "status": summary["status"],
             "hosts": summary["hosts"], "failures": summary["failures"],
-            "changes": result.changes}
+            "changes": result.changes, "diagnostics": diagnostics}
 
 
 class AdhocIn(BaseModel):
@@ -299,6 +647,7 @@ async def run_ws(ws: WebSocket):
     try:
         result = await run_playbook(req, on_event=push, cancel_event=cancel_event)
         summary = summarize(result)
+        diagnostics = _diagnose_failures(summary.get("failures") or [], check_mode=bool(req.check))
         if cancel_event.is_set():
             summary["canceled"] = True
         artifacts = await _capture_artifacts(req.project_id, run_id)
@@ -311,7 +660,8 @@ async def run_ws(ws: WebSocket):
                 run.failures_json = json.dumps(summary["failures"])
                 run.artifacts_json = json.dumps(artifacts)
                 await session.commit()
-        await ws.send_json({"event": "summary", "run_id": run_id, "artifacts": artifacts, **summary})
+        await ws.send_json({"event": "summary", "run_id": run_id, "artifacts": artifacts,
+                    "diagnostics": diagnostics, **summary})
     except Exception as e:
         async with SessionLocal() as session:
             run = await session.get(Run, run_id)

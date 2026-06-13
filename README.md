@@ -112,7 +112,34 @@ For live code reload while developing, layer the dev override (bind-mounts
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-The test suite (350+ cases) runs in CI on every push and PR — see
+The container exposes `GET /health` (DB ping included). The base compose wires
+a Docker healthcheck against it, so `docker ps` shows `(healthy)` once the
+service is up.
+
+### Lab regression (one command)
+
+Run a full API-level regression for a dockerized VM lab (preflight + multiple
+playbook runs + JSON report suitable for CI):
+
+```bash
+PROJECT_ID=<your_project_id> make lab-regression
+```
+
+Optional knobs:
+
+```bash
+PROJECT_ID=<id> \
+BASE_URL=http://127.0.0.1:8765 \
+INVENTORY_PATH=inventories/lab.ini \
+PLAYBOOKS_CSV=playbooks/lab_ping.yml,playbooks/lab_file.yml,playbooks/lab_apt.yml \
+EXTRA_VARS_JSON='{"some_var":"value"}' \
+make lab-regression
+```
+
+The command exits non-zero when preflight fails or any run is not `ok`/
+`successful`.
+
+The test suite (370+ cases) runs in CI on every push and PR — see
 `.github/workflows/ci.yml`.
 
 ## Design notes
