@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title="Playforge", lifespan=lifespan)
 
 
@@ -88,13 +90,12 @@ async def health():
     from app.models.db import SessionLocal as _SL
 
     db_ok = True
-    db_error = ""
     try:
         async with _SL() as session:
             await session.execute(text("SELECT 1"))
     except Exception as e:
         db_ok = False
-        db_error = str(e)[:200]
+        logger.exception("health check DB error: %s", e)
 
     payload = {
         "status": "ok" if db_ok else "degraded",
@@ -102,7 +103,6 @@ async def health():
         "db": "ok" if db_ok else "error",
     }
     if not db_ok:
-        payload["db_error"] = db_error
         return JSONResponse(payload, status_code=503)
     return payload
 

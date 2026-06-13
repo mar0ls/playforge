@@ -131,6 +131,10 @@ Optional knobs:
 PROJECT_ID=<id> \
 BASE_URL=http://127.0.0.1:8765 \
 INVENTORY_PATH=inventories/lab.ini \
+HOST_PATTERN=all \
+CHECK_PREFLIGHT=true \
+INCLUDE_TARGETS_PREFLIGHT=true \
+REQUEST_TIMEOUT_SEC=600 \
 PLAYBOOKS_CSV=playbooks/lab_ping.yml,playbooks/lab_file.yml,playbooks/lab_apt.yml \
 EXTRA_VARS_JSON='{"some_var":"value"}' \
 make lab-regression

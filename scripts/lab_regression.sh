@@ -20,8 +20,8 @@ Optional env vars:
   INVENTORY_PATH             Inventory path used for preflight and runs
   HOST_PATTERN               Host pattern used in preflight ping
   PLAYBOOKS_CSV              Comma-separated playbook list
-  CHECK_PREFLIGHT            true|false
-  INCLUDE_TARGETS_PREFLIGHT  true|false
+  CHECK_PREFLIGHT            true|false (include --check-mode-specific checks, e.g. python3-apt probe)
+  INCLUDE_TARGETS_PREFLIGHT  true|false (probe target reachability via ad-hoc ping)
   EXTRA_VARS_JSON            JSON object injected into each run (default: {})
   REQUEST_TIMEOUT_SEC        curl max time in seconds (default: 600)
 
@@ -94,10 +94,11 @@ preflight_req="$(jq -nc \
   --argjson include_targets "$include_targets_bool" \
   '{project_id:$project_id, inventory:$inventory, host_pattern:$host_pattern, check:$check, include_targets:$include_targets}')"
 
-preflight_resp="$(api_post '/api/runs/preflight' "$preflight_req")"
-if ! jq -e . >/dev/null 2>&1 <<<"$preflight_resp"; then
-  echo "ERROR: preflight response is not JSON" >&2
-  exit 3
+preflight_resp_raw="$(api_post '/api/runs/preflight' "$preflight_req")"
+if jq -e . >/dev/null 2>&1 <<<"$preflight_resp_raw"; then
+  preflight_resp="$preflight_resp_raw"
+else
+  preflight_resp="$(jq -nc --arg error 'non-json response' --arg raw "$preflight_resp_raw" '{ok:false, error:$error, raw:$raw}')"
 fi
 
 preflight_ok="$(jq -r '(.ok // false) | tostring' <<<"$preflight_resp")"

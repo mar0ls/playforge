@@ -249,13 +249,15 @@ async def test_run_ws_summary_includes_diagnostics(_seeded):
         with client.websocket_connect("/api/runs/ws") as ws:
             ws.send_json({"project_id": "pA", "playbook": "site.yml"})
             summary = None
-            while True:
+            for _ in range(200):
                 ev = ws.receive_json()
                 if ev.get("event") == "summary":
                     summary = ev
                     break
                 if ev.get("event") == "error":
                     raise AssertionError(f"ws errored: {ev}")
+            else:
+                raise AssertionError("timed out waiting for ws summary event")
     assert summary is not None
     assert "diagnostics" in summary
     assert isinstance(summary["diagnostics"], list)
