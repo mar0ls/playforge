@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title="Playforge", lifespan=lifespan)
 
 
@@ -82,7 +84,27 @@ app.include_router(environments_api.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "data_dir": str(settings.data_dir)}
+    """Liveness + DB ping. Returns 503 when the database is unreachable so
+    `docker compose`/k8s healthchecks can restart the container automatically."""
+    from sqlalchemy import text
+    from app.models.db import SessionLocal as _SL
+
+    db_ok = True
+    try:
+        async with _SL() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as e:
+        db_ok = False
+        logger.exception("health check DB error: %s", e)
+
+    payload = {
+        "status": "ok" if db_ok else "degraded",
+        "data_dir": str(settings.data_dir),
+        "db": "ok" if db_ok else "error",
+    }
+    if not db_ok:
+        return JSONResponse(payload, status_code=503)
+    return payload
 
 
 def _set_session(resp, request: Request):

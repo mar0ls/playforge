@@ -1,4 +1,4 @@
-.PHONY: build up down logs shell test test-fixture clean
+.PHONY: build up down logs shell test test-fixture lab-regression clean
 
 build:
 	docker compose build
@@ -30,6 +30,13 @@ test:
 test-fixture:
 	cd examples && rm -f hello-localhost.zip && zip -r hello-localhost.zip hello-localhost
 	@echo "Created examples/hello-localhost.zip — import it in the UI."
+
+lab-regression:
+	@if [ -z "$(PROJECT_ID)" ]; then \
+	  echo "PROJECT_ID is required, example: PROJECT_ID=<id> make lab-regression"; \
+	  exit 2; \
+	fi
+	./scripts/lab_regression.sh
 
 clean:
 	docker compose down -v

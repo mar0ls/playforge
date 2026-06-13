@@ -3,7 +3,46 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
-## [Unreleased]
+## [0.0.3] — 2026-06-13
+
+### Added
+- **`make lab-regression`** — one-shot API regression for a dockerized VM lab:
+  controller + targets preflight, runs the configured playbooks, and prints a
+  compact JSON report (`scripts/lab_regression.sh`). Exits non-zero when
+  preflight fails or any run is not `ok`/`successful`, so it slots straight
+  into CI. Knobs via env vars (`PROJECT_ID`, `BASE_URL`, `INVENTORY_PATH`,
+  `PLAYBOOKS_CSV`, `EXTRA_VARS_JSON`, `REQUEST_TIMEOUT_SEC`).
+- **`POST /api/runs/preflight`** — side-effect-free check (no Run row written)
+  that validates controller prerequisites (`ansible`, `ansible-playbook`,
+  `sudo`, optional `sshpass`/`passlib`) and, in `check` mode, probes for
+  `python3-apt` across the app interpreter, `/usr/bin/python3`, and `dpkg`.
+  Optionally probes target reachability with an ad-hoc `ping`.
+- **`GET /api/runs/{run_id}`** — global run detail by id (without the project
+  prefix), with `stats`, `failures`, `artifacts`, `diagnostics`, and resolved
+  `project_name`/`environment_name`. Returns 404 for unknown ids.
+- **`diagnostics` in run responses** — `start_run`, `preview_run`,
+  WebSocket `summary`, and `run_detail` now include a deterministic, dedup'd
+  list of actionable hints for common Ansible failures. Rules:
+  `missing_sudo`, `missing_python3_apt`, `ssh_restart_lockout`,
+  `firewall_permission_denied`, `host_unreachable`, `ssh_auth_failed`,
+  `dns_resolution_failed`, `disk_full`, `package_not_found`,
+  `missing_collection`, `become_password_required`,
+  `vault_password_required`, plus a generic `check_mode_failure` nudge.
+  Hints are phrased for non-expert operators (cause first, then fix).
+- **Docker healthcheck** — `GET /health` now does a `SELECT 1` against the
+  app DB and returns 503 on failure. The base `docker-compose.yml` wires it
+  to `healthcheck:`, so `docker ps` shows `(healthy)` once the app is up
+  and orchestrators can restart it on a real outage.
+- **WebSocket regression test** — `test_run_ws_summary_includes_diagnostics`
+  exercises `/api/runs/ws` end-to-end via `starlette.testclient` and asserts
+  the `diagnostics` field is on the `summary` event.
+
+### Changed
+- **Preflight: `sudo` and `python3-apt` are no longer required on the
+  controller.** Both run on the *target*, not the controller; flagging them
+  as hard requirements made a slim controller image (e.g. `python:3.12-slim`)
+  fail preflight for perfectly fine remote-only playbooks. They are still
+  reported in `checks` so the UI can suggest them when needed.
 
 ## [0.0.2] — 2026-06-07
 
