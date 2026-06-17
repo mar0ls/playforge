@@ -1,3 +1,8 @@
+# hadolint global ignore=DL3002
+# DL3002 (last USER must not be root) is a false positive here: we start as root
+# only so the entrypoint can chown the bind-mounted /data, then drop to `app` via
+# gosu — the same pattern the official postgres/redis images use. uvicorn (PID 1)
+# runs as uid 1000, verified.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         rsync \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Run as a non-root user. uid 1000 matches the host owner of the bind-mounted
@@ -41,8 +47,12 @@ ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections
 COPY app ./app
 RUN chown -R app:app /app
 
-USER app
+# Start as root so the entrypoint can fix bind-mounted /data ownership, then it
+# drops to the `app` user via gosu. (No `USER app` — the entrypoint handles it.)
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8765
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"]

@@ -13,3 +13,6 @@ data/
 TODO.md
 examples/*.zip
 
+
+# local secrets/config — keep the template (.env.example) tracked
+.env

@@ -3,6 +3,24 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.0.4] — 2026-06-17
+
+### Fixed
+- **First run crashed on a fresh host** — Docker creates the bind-mounted `./data`
+  owned by root, but the app runs as uid 1000, so the first `docker compose up`
+  died with `PermissionError: '/data/projects'`. A new entrypoint starts as root,
+  fixes `/data` ownership once, then drops to the `app` user via `gosu` (uvicorn
+  still runs non-root). Existing root-owned data dirs are repaired automatically
+  on the next start.
+
+### Added
+- **`.env.example`** — copy to `.env` for password / master key / AI provider
+  config. `.env` is now git-ignored.
+
+### Changed
+- **README quick start** — corrected clone URL (`mar0ls/playforge`) and documented
+  the optional `.env` step and host-side `./data` state.
+
 ## [0.0.3] — 2026-06-13
 
 ### Added
