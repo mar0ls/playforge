@@ -79,14 +79,16 @@ or a local **Ollama** server.
 ## Quick start
 
 ```bash
-git clone https://github.com/mar0ls/ansible_gui.git
-cd ansible_gui
+git clone https://github.com/mar0ls/playforge.git
+cd playforge
+cp .env.example .env   # optional — for a password, AI keys, etc.
 docker compose up --build -d   # → http://127.0.0.1:8765
 ```
 
-Configure the AI helper under **Settings → AI helper** (or set `OLLAMA_URL` /
-`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in `docker-compose.yml`). Everything works
-without AI too — it just adds the assistant.
+The `.env` step is optional: with no `.env` the app runs single-user/local with no
+AI. Configure the AI helper under **Settings → AI helper** at runtime, or set
+`OLLAMA_URL` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in `.env`. State (projects,
+git repos, SQLite) lives under `./data` on the host and survives rebuilds.
 
 ### Optional
 
