@@ -27,8 +27,8 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash app
 # A system-wide git identity so `git merge`/`pull` (and any shelled-out git) never
 # aborts for a missing committer identity. The app's own commits set an explicit
 # author; this is the fallback for everything else.
-RUN git config --system user.email "ansible-gui@localhost" \
-    && git config --system user.name "Ansible GUI" \
+RUN git config --system user.email "playforge@localhost" \
+    && git config --system user.name "Playforge" \
     && git config --system init.defaultBranch main
 
 WORKDIR /app

@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build app image
-        run: docker build -t ansible-gui:dev ./backend
+        run: docker build -t playforge:dev ./backend
 
       - name: Run test suite in image
         run: |
@@ -27,7 +27,7 @@ jobs:
             -v "$PWD/backend/tests:/app/tests:ro" \
             -v "$PWD/backend/pytest.ini:/app/pytest.ini:ro" \
             -v "$PWD/backend/requirements-dev.txt:/app/requirements-dev.txt:ro" \
-            ansible-gui:dev \
+            playforge:dev \
             sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest -p no:cacheprovider --color=yes"
 
   # Fast lint of the workflow + a quick syntax check, independent of the image build,

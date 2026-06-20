@@ -3,8 +3,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: ansible-gui:latest
-    container_name: ansible-gui
+    image: playforge:latest
+    container_name: playforge
     ports:
       - "8765:8765"
     volumes:

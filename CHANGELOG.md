@@ -3,6 +3,21 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.0.5] — 2026-06-20
+
+### Added
+- **SSH password credential** — new `ssh_password` credential kind for password
+  (non-key) SSH logins. Encrypted in the Credentials vault like the rest, selected
+  on the Run tab, injected at run time via sshpass — no secret in the inventory.
+  Credential Test supports it. Closes the gap where password logins had to be put
+  inline in `hosts`.
+
+### Changed
+- **Docker image & container renamed `ansible-gui` → `playforge`** (compose,
+  Makefile, CI, git identity). Env vars keep the `ANSIBLE_GUI_*` prefix for
+  backward compatibility. After upgrading, `docker compose up` creates the new
+  `playforge` container — remove the old one with `docker rm -f ansible-gui`.
+
 ## [0.0.4] — 2026-06-17
 
 ### Fixed

@@ -26,8 +26,8 @@ grounds every answer in your real modules and files — fully offline.
   environments, ad-hoc commands.
 
 **Secrets**
-- Credentials (SSH keys, vault/become passwords, WireGuard) encrypted at rest
-  with Fernet.
+- Credentials (SSH keys, SSH passwords, vault/become passwords, WireGuard)
+  encrypted at rest with Fernet.
 - Ansible Vault for in-repo secrets — encrypt/decrypt/view from the UI.
 
 **Editor & dependencies**
@@ -37,8 +37,8 @@ grounds every answer in your real modules and files — fully offline.
 - Ansible Galaxy: install/remove roles & collections by name or from `requirements.yml`.
 
 **Operations**
-- **Credential test** — probe an SSH key or sudo password against an inventory
-  before running a 30-task playbook; per-host ✓/✗ result.
+- **Credential test** — probe an SSH key, SSH password, or sudo password against
+  an inventory before running a 30-task playbook; per-host ✓/✗ result.
 - **Ad-hoc command builder** — any module + args + host pattern in one form
   (not just "ping all").
 - **`--limit` quick-pick** — click groups/hosts from the inventory to build the
@@ -96,8 +96,8 @@ git repos, SQLite) lives under `./data` on the host and survives rebuilds.
   session cookie). Unset = single-user local, no login.
 - **Import your projects**: bind-mount their directories read-only (see the
   commented `/import/*` examples in `docker-compose.yml`).
-- **Naming note**: product name is **Playforge**; technical env/image identifiers
-  use the `ANSIBLE_GUI*` / `ansible-gui` prefix.
+- **Naming note**: the image and container are `playforge`; environment variables
+  keep the `ANSIBLE_GUI_*` prefix for backward compatibility.
 
 ## Development
 
