@@ -126,6 +126,12 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
                     base["ssh_key_content"] = content
                 break  # ansible-runner supports one ssh_key per run; first wins
         for c in creds:
+            if c.kind == "ssh_password":
+                pw = cred_store.read_secret(c.id)
+                if pw:
+                    base["ssh_password_content"] = pw.rstrip("\n")
+                break  # one SSH login password per run; first wins
+        for c in creds:
             if c.kind == "vault_password":
                 vpass = cred_store.read_secret(c.id)
                 if vpass:

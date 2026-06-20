@@ -121,3 +121,20 @@ def test_wireguard_keys_written_and_exposed_as_extravar(tmp_path, monkeypatch):
         assert oct(kf.stat().st_mode)[-3:] == "600"
     finally:
         storage.delete_project(p.project_id)
+
+
+def test_ssh_password_injected_as_ansible_password(tmp_path, monkeypatch):
+    """ssh_password_content → extravars['ansible_password'] (sshpass path)."""
+    import os
+    os.environ["ANSIBLE_GUI_DATA_DIR"] = str(tmp_path)
+    from app.core import storage
+    from app.core.runner import _runner_kwargs, RunRequest
+    p = storage.create_project("sshpw")
+    try:
+        priv = tmp_path / "privpw"; priv.mkdir()
+        req = RunRequest(project_id=p.project_id, playbook="playbooks/site.yml",
+                         ssh_password_content="hunter2")
+        kwargs = _runner_kwargs(req, priv)
+        assert kwargs["extravars"]["ansible_password"] == "hunter2"
+    finally:
+        storage.delete_project(p.project_id)

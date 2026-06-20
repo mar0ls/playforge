@@ -23,7 +23,7 @@ test:
 	  -v $(PWD)/backend/tests:/app/tests:ro \
 	  -v $(PWD)/backend/pytest.ini:/app/pytest.ini:ro \
 	  -v $(PWD)/backend/requirements-dev.txt:/app/requirements-dev.txt:ro \
-	  ansible-gui:latest \
+	  playforge:latest \
 	  sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest"
 
 # Zip the example project so it can be imported via the UI.

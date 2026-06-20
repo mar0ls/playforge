@@ -171,6 +171,16 @@
               </select>
             </label>
           </template>
+          <template x-if="sshPassCreds.length">
+            <label>SSH password (login, optional)
+              <select x-model.number="selectedSshPassId">
+                <option :value="0">— none —</option>
+                <template x-for="c in sshPassCreds" :key="c.id">
+                  <option :value="c.id" x-text="c.name"></option>
+                </template>
+              </select>
+            </label>
+          </template>
           <template x-if="becomeCreds.length">
             <label>Become (sudo) password (optional)
               <select x-model.number="selectedBecomeId">

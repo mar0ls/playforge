@@ -16,3 +16,6 @@ examples/*.zip
 
 # local secrets/config — keep the template (.env.example) tracked
 .env
+
+# local example playbooks used for live testing (not part of the app)
+playbooks/

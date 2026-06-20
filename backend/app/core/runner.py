@@ -35,6 +35,7 @@ class RunRequest:
     syntax_check: bool = False  # ansible --syntax-check
     verbosity: int = 0        # 0..4 → maps to -v / -vv / etc.
     ssh_key_content: str | None = None  # injected from a Credential at run time
+    ssh_password_content: str | None = None  # SSH login password (sshpass) from a Credential
     vault_password_content: str | None = None  # injected from a vault_password Credential
     become_password_content: str | None = None  # injected from a become_password Credential
     wireguard_keys: dict | None = None  # name -> secret; written to 0600 files at run time
@@ -169,9 +170,15 @@ def _runner_kwargs(req: RunRequest, private_data_dir: Path) -> dict:
         become_file.chmod(0o600)
         cmdline_parts += ["--become-password-file", str(become_file)]
 
+    # SSH login password (no key): hand it to ansible as a connection var. The image
+    # ships sshpass, which ansible uses for password auth. extravars land in a 0600
+    # file in the private dir that we delete after the run.
+    extravars = dict(req.extra_vars or {})
+    if req.ssh_password_content:
+        extravars["ansible_password"] = req.ssh_password_content
+
     # WireGuard (and similar) key material: write each secret to a 0600 file in the
     # run's private dir and hand the playbook a `wireguard_keys` map of name->path.
-    extravars = dict(req.extra_vars or {})
     if req.wireguard_keys:
         wg_dir = private_data_dir / "wg_keys"
         wg_dir.mkdir(exist_ok=True)

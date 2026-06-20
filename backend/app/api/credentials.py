@@ -18,7 +18,7 @@ from app.models.db import SessionLocal, Credential
 
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 
-VALID_KINDS = {"ssh_key", "vault_password", "become_password", "wireguard_key"}
+VALID_KINDS = {"ssh_key", "ssh_password", "vault_password", "become_password", "wireguard_key"}
 
 
 class CredIn(BaseModel):
@@ -154,6 +154,18 @@ async def test_credential(cred_id: int, payload: CredTestIn):
             )
             req = RunRequest(project_id=payload.project_id, playbook=playbook_rel,
                              inventory=payload.inventory, ssh_key_content=secret)
+        elif c.kind == "ssh_password":
+            probe_path.write_text(
+                "---\n"
+                f"- hosts: {payload.host_pattern}\n"
+                "  gather_facts: false\n"
+                "  tasks:\n"
+                "    - name: probe ssh\n"
+                "      ansible.builtin.ping:\n"
+            )
+            req = RunRequest(project_id=payload.project_id, playbook=playbook_rel,
+                             inventory=payload.inventory,
+                             ssh_password_content=secret.rstrip("\n"))
         elif c.kind == "become_password":
             probe_path.write_text(
                 "---\n"

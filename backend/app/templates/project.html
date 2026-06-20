@@ -63,8 +63,8 @@ function projectPage(projectId) {
     adhoc: { open: false, host_pattern: "all", module: "ping", args: "", busy: false, result: null, error: "" },
     fileEncrypted: false, vaultBusy: false, vaultPlaintext: "",
     vaultCreds: [], vaultCredId: 0,
-    templates: [], sshCreds: [], becomeCreds: [], wireguardCreds: [], allCreds: [],
-    selectedCredentialId: 0, selectedBecomeId: 0, selectedWireguardIds: [],
+    templates: [], sshCreds: [], sshPassCreds: [], becomeCreds: [], wireguardCreds: [], allCreds: [],
+    selectedCredentialId: 0, selectedSshPassId: 0, selectedBecomeId: 0, selectedWireguardIds: [],
     playbookTemplates: [],
     environments: [], selectedEnvId: 0, showEnvMgr: false,
     envForm: { name: "", inventory_path: "", default_credential_id: 0 },
@@ -103,6 +103,7 @@ function projectPage(projectId) {
       this.templates = tplR || [];
       this.allCreds = credR || [];
       this.sshCreds = (credR || []).filter(c => c.kind === "ssh_key");
+      this.sshPassCreds = (credR || []).filter(c => c.kind === "ssh_password");
       this.becomeCreds = (credR || []).filter(c => c.kind === "become_password");
       this.wireguardCreds = (credR || []).filter(c => c.kind === "wireguard_key");
       this.vaultCreds = (credR || []).filter(c => c.kind === "vault_password");
@@ -323,6 +324,7 @@ function projectPage(projectId) {
     runCredentialIds() {
       const ids = [];
       if (this.selectedCredentialId) ids.push(this.selectedCredentialId);
+      if (this.selectedSshPassId) ids.push(this.selectedSshPassId);
       if (this.selectedBecomeId) ids.push(this.selectedBecomeId);
       ids.push(...(this.selectedWireguardIds || []));
       return [...new Set(ids)];
