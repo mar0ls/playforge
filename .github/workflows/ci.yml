@@ -30,22 +30,24 @@ jobs:
 
       - name: Run test suite in image
         run: |
+          mkdir -p coverage
+
           docker run --rm \
             -v "$PWD/backend/tests:/app/tests:ro" \
             -v "$PWD/backend/pytest.ini:/app/pytest.ini:ro" \
             -v "$PWD/backend/requirements-dev.txt:/app/requirements-dev.txt:ro" \
-            -v "$PWD:/workspace" \
+            -v "$PWD/coverage:/workspace" \
             playforge:dev \
             sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=xml:/workspace/coverage.xml -p no:cacheprovider --color=yes"
 
       - name: Verify coverage report
-        run: ls -lh coverage.xml
+        run: ls -lh coverage/coverage.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.xml
+          files: ./coverage/coverage.xml
 
   # Fast syntax check, independent of Docker build.
   syntax:
