@@ -1,3 +1,5 @@
+[![CI](https://github.com/mar0ls/playforge/actions/workflows/ci.yml/badge.svg)](https://github.com/mar0ls/playforge/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/mar0ls/playforge/graph/badge.svg)](https://codecov.io/gh/mar0ls/playforge)
+
 # Playforge
 
 ![Playforge dashboard](assets/screen.png)

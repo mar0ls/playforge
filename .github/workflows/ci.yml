@@ -4,17 +4,24 @@ name: CI
 # built image, so heavy tests (git, ansible-doc, baked Galaxy collections) really
 # run instead of being skipped. The same file works under Gitea/Forgejo Actions —
 # it's the same runner engine and action set.
-# quoted so YAML 1.1 doesn't read `on` as the boolean true
+#
+# Quoted so YAML 1.1 doesn't read `on` as the boolean true.
 "on":
   push:
-    branches: [main, dev]
-    tags: ["v*"]          # tagging a release re-runs the suite, so releases are green
-  pull_request:           # every PR shows a green/red check before merge
-  workflow_dispatch:      # manual run button
+    branches:
+      - main
+      - dev
+    tags:
+      - "v*"
+
+  pull_request:
+
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,32 +34,47 @@ jobs:
             -v "$PWD/backend/tests:/app/tests:ro" \
             -v "$PWD/backend/pytest.ini:/app/pytest.ini:ro" \
             -v "$PWD/backend/requirements-dev.txt:/app/requirements-dev.txt:ro" \
+            -v "$PWD:/workspace" \
             playforge:dev \
-            sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest -p no:cacheprovider --color=yes"
+            sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=xml:/workspace/coverage.xml -p no:cacheprovider --color=yes"
 
-  # Fast lint of the workflow + a quick syntax check, independent of the image build,
-  # so obvious Python syntax errors fail in seconds without waiting for Docker.
+      - name: Verify coverage report
+        run: ls -lh coverage.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+
+  # Fast syntax check, independent of Docker build.
   syntax:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Byte-compile all backend modules
         run: python -m compileall -q backend/app
 
-  # Static type check. Lenient baseline (ignore_missing_imports) — guards against
-  # type regressions without needing third-party stubs. Fast, no image build.
+  # Static type check.
   types:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install mypy + runtime deps (for inline types)
+
+      - name: Install mypy + runtime deps
         run: pip install -q "mypy>=1.8" -r backend/requirements.txt
+
       - name: Type-check backend/app
         working-directory: backend
         run: python -m mypy app --config-file mypy.ini
