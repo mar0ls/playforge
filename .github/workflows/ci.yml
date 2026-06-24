@@ -31,7 +31,7 @@ jobs:
       - name: Run test suite in image
         run: |
           mkdir -p coverage
-
+          sudo chown 1000:1000 coverage
           docker run --rm \
             -v "$PWD/backend/tests:/app/tests:ro" \
             -v "$PWD/backend/pytest.ini:/app/pytest.ini:ro" \
