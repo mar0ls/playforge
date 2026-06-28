@@ -19,3 +19,8 @@ examples/*.zip
 
 # local example playbooks used for live testing (not part of the app)
 playbooks/
+
+# heavy design sources — only the optimized derivatives are committed
+# (assets/hero.jpg, static/img/favicon.png, static/img/mark.png)
+assets/logo1.png
+assets/background_p.png

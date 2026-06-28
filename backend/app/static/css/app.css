@@ -76,9 +76,7 @@ small { color: var(--muted); }
 }
 .sidebar .brand-mark {
   width: 26px; height: 26px; border-radius: 6px;
-  background: linear-gradient(135deg, var(--accent) 0%, #8957e5 100%);
-  display: inline-flex; align-items: center; justify-content: center;
-  color: white; font-weight: 700; font-size: 0.85rem;
+  object-fit: cover; flex: 0 0 auto;
 }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; padding: 0 0.5rem; }
 .sidebar nav a {

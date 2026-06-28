@@ -1,6 +1,8 @@
+[![CI](https://github.com/mar0ls/playforge/actions/workflows/ci.yml/badge.svg)](https://github.com/mar0ls/playforge/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/mar0ls/playforge/graph/badge.svg)](https://codecov.io/gh/mar0ls/playforge)
+
 # Playforge
 
-![Playforge dashboard](assets/screen.png)
+![Playforge](assets/hero.jpg)
 
 A self-hosted web UI for managing and running Ansible — a simpler, friendlier AWX
 that runs from a single `docker compose up`, with no Postgres, Redis or Receptor.
@@ -75,6 +77,10 @@ grounds every answer in your real modules and files — fully offline.
 
 Pluggable model backends: Anthropic, OpenAI (or any OpenAI-compatible endpoint),
 or a local **Ollama** server.
+
+## Screenshots
+
+![Playforge dashboard](assets/screen.png)
 
 ## Quick start
 
