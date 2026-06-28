@@ -3,6 +3,15 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.0.6] — 2026-06-28
+
+### Added
+- **Logo & branding** — Playforge logo as the favicon and sidebar mark, plus a
+  README hero image. Heavy design sources stay out of the repo; only optimized
+  derivatives are committed.
+- **Code coverage in CI** — pytest-cov report uploaded to Codecov on every run,
+  with a coverage badge in the README.
+
 ## [0.0.5] — 2026-06-20
 
 ### Added
