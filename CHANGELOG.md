@@ -3,6 +3,24 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.0.7] — 2026-06-30
+
+### Added
+- **Streaming chat** — responses streamed token-by-token via `POST /api/ai/chat/stream`
+  (newline-delimited JSON); the dock and full page populate live, with a fallback to the
+  non-streaming endpoint. Most beneficial for long generations and slow local models.
+- **One-click "Fix with agent"** — on a failed run, the button sends the agent to read
+  the run (`get_run`), fix the playbook, and preview it. Stays human-reviewable: watch it
+  in the dock, then re-run to confirm.
+- **Clear run history** — `DELETE /api/runs` and a dashboard button; resets the stats and
+  the run list. (Project files and git artifacts are kept.)
+
+A demo of the streaming assistant has been added to the README.
+
+### Fixed
+- Streaming chat no longer shows a duplicate "thinking…" bubble; the in-flight reply
+  bubble shows it until the first token arrives.
+
 ## [0.0.6] — 2026-06-28
 
 ### Added

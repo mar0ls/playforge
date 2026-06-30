@@ -262,3 +262,21 @@ async def test_run_ws_summary_includes_diagnostics(_seeded):
     assert "diagnostics" in summary
     assert isinstance(summary["diagnostics"], list)
     assert "run_id" in summary
+
+
+async def test_clear_runs_deletes_history(_seeded):
+    from app.api.runs import clear_runs
+    await clear_runs()  # reset rows other tests may have created (shared DB)
+    async with SessionLocal() as s:
+        s.add(Run(project_id="pA", playbook="a.yml", status="ok"))
+        s.add(Run(project_id="pB", playbook="b.yml", status="failed"))
+        await s.commit()
+    # filtered delete (only pA)
+    out = await clear_runs(project_id="pA")
+    assert out["deleted"] == 1
+    rows = await list_runs()
+    assert [r["project_id"] for r in rows] == ["pB"]
+    # delete the rest
+    out2 = await clear_runs()
+    assert out2["deleted"] == 1
+    assert await list_runs() == []

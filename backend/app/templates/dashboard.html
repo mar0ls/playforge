@@ -37,7 +37,13 @@
     <div class="card">
       <div class="card-header">
         <h3>Recent runs</h3>
-        <a href="/runs" class="text-sm muted">View all →</a>
+        <div class="row gap-sm" style="align-items:center;">
+          <button class="btn-ghost btn-sm" @click="clearRuns()" x-show="stats.runs_total"
+                  title="Delete all run history (project files/artifacts in git are kept)">
+            <i class="icon" data-lucide="trash-2"></i> Clear history
+          </button>
+          <a href="/runs" class="text-sm muted">View all →</a>
+        </div>
       </div>
       <template x-if="recent.length === 0">
         <div class="empty-state">
@@ -102,6 +108,15 @@ function dashboard() {
       ]);
       this.stats = s; this.recent = r; this.sys = h;
       this.$nextTick(() => lucide.createIcons());
+    },
+    async clearRuns() {
+      if (!confirm("Delete ALL run history? Dashboard stats and the Runs list reset. "
+                   + "Files committed to your projects are kept.")) return;
+      const r = await fetch("/api/runs", {method: "DELETE"});
+      if (!r.ok) { alert("Failed to clear run history."); return; }
+      const d = await r.json().catch(() => ({}));
+      await this.load();
+      if (d.deleted !== undefined) console.log(`cleared ${d.deleted} run(s)`);
     },
     badgeFor(s) {
       if (s === "ok" || s === "successful") return "ok";
