@@ -104,11 +104,17 @@
       <div class="card" x-show="run.failures.length">
         <div class="row between">
           <h3>Failures (<span x-text="run.failures.length"></span>)</h3>
-          <button class="btn-secondary btn-sm" @click="rerunFailed()" :disabled="rerunning"
-                  x-show="failedHosts().length">
-            <i class="icon" data-lucide="rotate-ccw"></i>
-            <span x-text="rerunning ? 'Starting…' : `Re-run ${failedHosts().length} failed host(s)`"></span>
-          </button>
+          <div class="row gap-sm">
+            <button class="btn-sm" @click="$store.chat.fixRun(projectId, runId)" x-show="aiEnabled"
+                    title="Let the agent read this run, fix the playbook, and preview it">
+              <i class="icon" data-lucide="wrench"></i> Fix with agent
+            </button>
+            <button class="btn-secondary btn-sm" @click="rerunFailed()" :disabled="rerunning"
+                    x-show="failedHosts().length">
+              <i class="icon" data-lucide="rotate-ccw"></i>
+              <span x-text="rerunning ? 'Starting…' : `Re-run ${failedHosts().length} failed host(s)`"></span>
+            </button>
+          </div>
         </div>
         <template x-for="(f, i) in run.failures" :key="i">
           <div class="card" style="background:#1a0f12; border-color:#3d1d1d;">

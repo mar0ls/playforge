@@ -6,6 +6,7 @@ import functools
 import hashlib
 import json
 import re
+import threading
 
 from app.core import doc_index
 from app.core import playbook_rules
@@ -93,8 +94,9 @@ def clear_chat_cache() -> None:
     _CHAT_CACHE.clear()
 
 
-async def chat(messages: list[dict], *, project_context: str = "", project_root=None,
-               project_id: str | None = None) -> dict:
+async def _prepare_chat(messages: list[dict], *, project_context: str = "", project_id: str | None = None):
+    """Resolve provider, build the RAG-grounded system prompt, the cleaned history,
+    and the cache key. Shared by chat() and chat_stream()."""
     from app.core import ai
 
     provider, cfg = await ai.resolve_provider()
@@ -152,6 +154,28 @@ async def chat(messages: list[dict], *, project_context: str = "", project_root=
 
     model = cfg.get("model", "")
     key = _chat_cache_key(provider, model, clean + [{"role": "system", "content": system}])
+    return ai, provider, cfg, system, clean, retrieved, model, key
+
+
+def _finalize(ai, provider, model, retrieved, reply: str, project_root, key) -> dict:
+    """Post-process a full reply: autofix YAML, validate, extract files, cache."""
+    reply = playbook_rules.autofix_reply(reply)
+    issues = playbook_rules.check_reply(reply, project_root)
+    validation = ai.validate_text(reply)
+    validation["playbook_issues"] = issues
+    result = {"provider": provider, "model": model, "reply": reply, "validation": validation,
+              "retrieved_modules": [d["module"] for d in retrieved],
+              "files": extract_files(reply)}
+    _CHAT_CACHE[key] = result
+    if len(_CHAT_CACHE) > _CHAT_CACHE_MAX:
+        _CHAT_CACHE.pop(next(iter(_CHAT_CACHE)))
+    return result
+
+
+async def chat(messages: list[dict], *, project_context: str = "", project_root=None,
+               project_id: str | None = None) -> dict:
+    ai, provider, cfg, system, clean, retrieved, model, key = await _prepare_chat(
+        messages, project_context=project_context, project_id=project_id)
     if key in _CHAT_CACHE:
         return {**_CHAT_CACHE[key], "cached": True}
 
@@ -172,17 +196,52 @@ async def chat(messages: list[dict], *, project_context: str = "", project_root=
                 + ". Re-output the SAME files corrected, valid YAML only, same `# file:` blocks."},
         ]
         retry = (await asyncio.to_thread(ai._provider_chat, provider, system, fix_msgs, cfg) or "").strip()
-        retry_issues = playbook_rules.check_reply(retry, project_root)
-        if retry and not [i for i in retry_issues if "invalid YAML" in i.get("message", "")]:
-            reply, issues = retry, retry_issues
+        if retry and not [i for i in playbook_rules.check_reply(retry, project_root)
+                          if "invalid YAML" in i.get("message", "")]:
+            reply = retry
 
-    validation = ai.validate_text(reply)
-    validation["playbook_issues"] = issues
-    result = {"provider": provider, "model": model, "reply": reply, "validation": validation,
-              "retrieved_modules": [d["module"] for d in retrieved],
-              "files": extract_files(reply)}
+    return _finalize(ai, provider, model, retrieved, reply, project_root, key)
 
-    _CHAT_CACHE[key] = result
-    if len(_CHAT_CACHE) > _CHAT_CACHE_MAX:
-        _CHAT_CACHE.pop(next(iter(_CHAT_CACHE)))
-    return result
+
+async def chat_stream(messages: list[dict], *, project_context: str = "", project_root=None,
+                      project_id: str | None = None):
+    """Async generator: yields {"type":"token","text":...} as the reply streams,
+    then a final {"type":"done", ...} with the validated reply / files / validation.
+    Skips the silent YAML-retry of chat() — autofix still runs and issues are reported."""
+    ai, provider, cfg, system, clean, retrieved, model, key = await _prepare_chat(
+        messages, project_context=project_context, project_id=project_id)
+
+    if key in _CHAT_CACHE:  # cached → emit whole reply, then done
+        cached = _CHAT_CACHE[key]
+        yield {"type": "token", "text": cached["reply"]}
+        yield {"type": "done", **cached, "cached": True}
+        return
+
+    # Bridge the sync provider generator to the event loop via a worker thread.
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    _END = object()
+
+    def _produce():
+        try:
+            for delta in ai._provider_chat_stream(provider, system, clean, cfg):
+                loop.call_soon_threadsafe(queue.put_nowait, delta)
+        except Exception as e:  # noqa: BLE001 — surface provider errors to the consumer
+            loop.call_soon_threadsafe(queue.put_nowait, e)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, _END)
+
+    threading.Thread(target=_produce, daemon=True).start()
+
+    chunks: list[str] = []
+    while True:
+        item = await queue.get()
+        if item is _END:
+            break
+        if isinstance(item, Exception):
+            raise item
+        chunks.append(item)
+        yield {"type": "token", "text": item}
+
+    result = _finalize(ai, provider, model, retrieved, "".join(chunks).strip(), project_root, key)
+    yield {"type": "done", **result}

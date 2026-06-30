@@ -14,8 +14,10 @@ the user has to save them separately via `/config`.
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core import ai
@@ -217,6 +219,35 @@ async def chat(payload: ChatIn):
                              project_id=payload.project_id)
     except Exception as e:
         raise HTTPException(500, f"chat failed: {e}")
+
+
+@router.post("/chat/stream")
+async def chat_stream(payload: ChatIn):
+    """Streaming variant of /chat: newline-delimited JSON events. Each line is
+    `{"type":"token","text":...}` as the reply arrives, then a final
+    `{"type":"done", reply, validation, files, ...}`. On error, a
+    `{"type":"error","message":...}` line. The client should fall back to /chat
+    if this returns non-200."""
+    if not await ai.ai_enabled():
+        raise HTTPException(503, "AI helper not configured. Go to Settings → AI helper to set it up.")
+    project_root = None
+    if payload.project_id:
+        try:
+            project_root = storage.paths_for(payload.project_id).root
+        except storage.StorageError:
+            project_root = None
+
+    async def _ndjson():
+        try:
+            async for event in ai.chat_stream(payload.messages,
+                                               project_context=_project_context(payload.project_id),
+                                               project_root=project_root,
+                                               project_id=payload.project_id):
+                yield json.dumps(event, default=str) + "\n"
+        except Exception as e:
+            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+    return StreamingResponse(_ndjson(), media_type="application/x-ndjson")
 
 
 class AgentIn(BaseModel):

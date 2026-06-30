@@ -1,6 +1,9 @@
 """Provider dispatch: resolve current backend + uniform chat/text/json calls."""
 from __future__ import annotations
 
+import json
+from typing import Iterator
+
 import anthropic
 import httpx
 
@@ -83,6 +86,71 @@ def _ollama_chat(cfg: dict, messages: list, *, fmt: str | None = None,
         r = c.post(f"{cfg['url']}/api/chat", json=payload)
         r.raise_for_status()
         return r.json()
+
+
+# ---- Streaming (token-by-token) --------------------------------------------
+# Sync generators (httpx sync client). The async chat layer bridges them to the
+# event loop via a worker thread + queue.
+
+def _ollama_chat_stream(cfg: dict, messages: list, *, num_predict: int = 1200) -> Iterator[str]:
+    payload = {
+        "model": cfg["model"], "stream": True,
+        "keep_alive": cfg.get("keep_alive", "30m"), "messages": messages,
+        "options": {"temperature": 0.3, "num_predict": num_predict},
+    }
+    with httpx.Client(timeout=cfg["timeout"]) as c:
+        with c.stream("POST", f"{cfg['url']}/api/chat", json=payload) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                obj = json.loads(line)
+                delta = (obj.get("message") or {}).get("content", "")
+                if delta:
+                    yield delta
+                if obj.get("done"):
+                    break
+
+
+def _openai_chat_stream(cfg: dict, messages: list, *, max_tokens: int = 1200) -> Iterator[str]:
+    body = {"model": cfg["model"], "messages": messages, "max_tokens": max_tokens,
+            "temperature": 0.3, "stream": True}
+    with httpx.Client(timeout=cfg["timeout"]) as c:
+        with c.stream("POST", f"{cfg['base_url']}/chat/completions",
+                      headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=body) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                delta = (json.loads(data)["choices"][0].get("delta") or {}).get("content")
+                if delta:
+                    yield delta
+
+
+def _anthropic_chat_stream(cfg: dict, system: str, messages: list, *, max_tokens: int = 1200) -> Iterator[str]:
+    client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"])
+    with client.messages.stream(model=cfg["model"], max_tokens=max_tokens,
+                                system=system, messages=messages) as stream:
+        for text in stream.text_stream:
+            yield text
+
+
+def _provider_chat_stream(provider: str, system: str, messages: list[dict], cfg: dict,
+                          *, max_tokens: int = 1200) -> Iterator[str]:
+    """Yield reply text deltas from the active provider as they arrive."""
+    if provider == "anthropic":
+        yield from _anthropic_chat_stream(cfg, system, messages, max_tokens=max_tokens)
+    elif provider == "openai":
+        yield from _openai_chat_stream(cfg, [{"role": "system", "content": system}, *messages],
+                                       max_tokens=max_tokens)
+    elif provider == "ollama":
+        yield from _ollama_chat_stream(cfg, [{"role": "system", "content": system}, *messages],
+                                       num_predict=max_tokens)
+    else:
+        raise RuntimeError(f"unknown provider: {provider}")
 
 
 # ---- Uniform dispatchers ---------------------------------------------------

@@ -145,3 +145,32 @@ async def test_chat_no_retry_when_yaml_valid(monkeypatch):
     monkeypatch.setattr(ai, "_provider_chat", _fake_chat)
     await ai.chat([{"role": "user", "content": "make a unique valid playbook please"}])
     assert calls["n"] == 1  # no retry needed
+
+
+# --- streaming chat ---------------------------------------------------------
+
+async def test_chat_stream_yields_tokens_then_done(monkeypatch):
+    monkeypatch.setattr(ai, "setting", _fake_setting(_OPENAI))
+    monkeypatch.setattr(ai, "validate_text", lambda t: {"confidence": "high", "unknown_modules": []})
+    monkeypatch.setattr(ai, "_provider_chat_stream",
+                        lambda p, s, m, c, **k: iter(["Use ", "ansible.builtin.apt."]))
+    events = []
+    async for ev in ai.chat_stream([{"role": "user", "content": "install nginx?"}]):
+        events.append(ev)
+    tokens = "".join(e["text"] for e in events if e["type"] == "token")
+    done = [e for e in events if e["type"] == "done"]
+    assert tokens == "Use ansible.builtin.apt."
+    assert len(done) == 1 and done[0]["reply"] == "Use ansible.builtin.apt."
+    assert done[0]["validation"]["confidence"] == "high"
+
+
+async def test_chat_stream_surfaces_provider_error(monkeypatch):
+    monkeypatch.setattr(ai, "setting", _fake_setting(_OPENAI))
+    monkeypatch.setattr(ai, "validate_text", lambda t: {})
+    def _boom(p, s, m, c, **k):
+        raise RuntimeError("ollama down")
+        yield  # make it a generator
+    monkeypatch.setattr(ai, "_provider_chat_stream", _boom)
+    with pytest.raises(RuntimeError, match="ollama down"):
+        async for _ in ai.chat_stream([{"role": "user", "content": "hi"}]):
+            pass

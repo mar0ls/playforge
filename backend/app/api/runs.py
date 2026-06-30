@@ -477,6 +477,27 @@ async def list_runs(project_id: str | None = None, status: str | None = None,
     ]
 
 
+@router.delete("")
+async def clear_runs(project_id: str | None = None, status: str | None = None,
+                     older_than_days: int | None = None):
+    """Delete run-history rows (the dashboard stats and /runs list are derived from
+    them). Does NOT touch project files or run artifacts already committed to git.
+    Optional filters scope the deletion; no filters = all runs."""
+    from datetime import timedelta
+    from sqlalchemy import delete as sa_delete
+    async with SessionLocal() as session:
+        stmt = sa_delete(Run)
+        if project_id:
+            stmt = stmt.where(Run.project_id == project_id)
+        if status:
+            stmt = stmt.where(Run.status == status)
+        if older_than_days and older_than_days > 0:
+            stmt = stmt.where(Run.started_at < datetime.utcnow() - timedelta(days=older_than_days))
+        result = await session.execute(stmt)
+        await session.commit()
+    return {"deleted": getattr(result, "rowcount", 0)}
+
+
 @router.get("/{run_id}")
 async def run_detail(run_id: int):
     """Global run detail by id (without project prefix), useful for /runs views and API tooling."""

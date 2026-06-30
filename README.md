@@ -2,7 +2,7 @@
 
 # Playforge
 
-![Playforge](assets/hero.jpg)
+![Playforge — generating a playbook, streamed token-by-token and self-checked](assets/demo.gif)
 
 A self-hosted web UI for managing and running Ansible — a simpler, friendlier AWX
 that runs from a single `docker compose up`, with no Postgres, Redis or Receptor.
@@ -52,7 +52,7 @@ grounds every answer in your real modules and files — fully offline.
 
 **✨ AI assistant (the part that's actually unique)**
 - **Chat** on every page (slide-out dock) and a full page — *one shared conversation*,
-  live-synced and remembered across refreshes.
+  live-synced and remembered across refreshes. Replies stream in token-by-token.
 - **Agent mode**: a tool-using agent that actually works on a project — it inspects
   files, writes/edits/moves them, installs collections, and can **dry-run (`--check`)
   or run** a playbook, then read the failures and fix them. It uses the
@@ -61,7 +61,8 @@ grounds every answer in your real modules and files — fully offline.
   (read-only → "allow changes" → "allow delete / web").
 - **NL → playbook**: describe what you want, get a reviewable spec + YAML.
 - **Remediation loop**: after a failure, get a concrete fix and re-run only the
-  failed hosts.
+  failed hosts — or one-click **Fix with agent** to have the agent read the run,
+  patch the playbook, and preview it.
 - **Pre-run preview**: a `--check` dry-run narrated in plain language ("what will
   change, where").
 - **Auto-runbook**: living Markdown docs generated from your playbooks.
@@ -104,6 +105,18 @@ git repos, SQLite) lives under `./data` on the host and survives rebuilds.
   commented `/import/*` examples in `docker-compose.yml`).
 - **Naming note**: the image and container are `playforge`; environment variables
   keep the `ANSIBLE_GUI_*` prefix for backward compatibility.
+
+## Try the self-checking loop
+
+See it end to end without a remote host:
+
+```bash
+scripts/demo.sh   # creates a project + a deliberately failing run on localhost
+```
+
+It prints a run URL — open it and click **Fix with agent**: the agent reads the
+failure, fixes the playbook (a typo'd module), and previews it. Then **Re-run** to
+confirm. (To record a GIF, screen-capture the browser during that step.)
 
 ## Development
 

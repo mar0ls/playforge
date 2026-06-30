@@ -76,6 +76,7 @@
           <template x-for="(m, i) in $store.chat.messages" :key="i">
             <div :class="`msg ${m.role}`">
               <div class="msg-role" x-text="m.role === 'user' ? 'You' : (m.agent ? 'Agent' : 'Assistant')"></div>
+              <div class="muted" x-show="m.streaming && !m.content">thinking…</div>
               <template x-if="m.steps && m.steps.length">
                 <div class="text-xs" style="margin-bottom:.4rem;">
                   <div style="font-weight:600;">🤖 Actions (<span x-text="m.steps.length"></span>):</div>
@@ -172,7 +173,7 @@
             </div>
           </template>
 
-          <div class="msg assistant" x-show="$store.chat.busy">
+          <div class="msg assistant" x-show="$store.chat.busy && !$store.chat.messages.some(x => x.streaming)">
             <div class="msg-role" x-text="$store.chat.mode==='agent' ? 'Agent' : 'Assistant'"></div>
             <div class="muted" x-text="$store.chat.mode==='agent' ? 'working…' : 'thinking…'"></div>
           </div>

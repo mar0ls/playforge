@@ -14,6 +14,7 @@ from .providers import (
     probe_anthropic, probe_openai, probe_ollama,
     _openai_chat, _ollama_chat,
     _provider_chat, _provider_text, _provider_json,
+    _provider_chat_stream,
 )
 from .explain import (
     explain_failure, EXPLAIN_SYSTEM, CRITIQUE_SYSTEM,
@@ -28,7 +29,7 @@ from .generate import (
 from .suggest import suggest_fix, SUGGEST_SYSTEM
 from .narrate import narrate_plan, NARRATE_SYSTEM, _narrate_user_prompt
 from .chat import (
-    chat, extract_files, CHAT_SYSTEM,
+    chat, chat_stream, extract_files, CHAT_SYSTEM,
     _CHAT_CACHE, clear_chat_cache, _chat_cache_key,
 )
 from .runbook import generate_runbook, RUNBOOK_SYSTEM
@@ -39,6 +40,6 @@ __all__ = [
     "resolve_provider", "ai_enabled",
     "probe_anthropic", "probe_openai", "probe_ollama",
     "explain_failure", "generate_playbook", "suggest_fix", "narrate_plan",
-    "chat", "extract_files", "generate_runbook", "run_project_agent",
+    "chat", "chat_stream", "extract_files", "generate_runbook", "run_project_agent",
     "clear_chat_cache",
 ]

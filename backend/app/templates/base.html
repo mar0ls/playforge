@@ -146,6 +146,7 @@
       </template>
       <template x-for="(m, i) in $store.chat.messages" :key="i">
         <div :class="`ai-msg ${m.role}`">
+          <span class="muted" x-show="m.streaming && !m.content">thinking…</span>
           <template x-if="m.steps && m.steps.length">
             <div class="text-xs" style="margin-bottom:.3rem;">
               <strong>🤖 Actions (<span x-text="m.steps.length"></span>):</strong>
@@ -194,7 +195,7 @@
           </template>
         </div>
       </template>
-      <div class="ai-msg assistant muted" x-show="$store.chat.busy" x-text="$store.chat.mode==='agent' ? 'working…' : 'thinking…'"></div>
+      <div class="ai-msg assistant muted" x-show="$store.chat.busy && !$store.chat.messages.some(x => x.streaming)" x-text="$store.chat.mode==='agent' ? 'working…' : 'thinking…'"></div>
     </div>
 
     <div class="ai-dock-save card" x-show="$store.chat.saveDialog" x-cloak>
@@ -296,26 +297,61 @@
 
       // ---- sending ----
       submit() { return this.mode === "agent" ? this.sendAgent() : this.send(); },
+      // Attach a finished reply's validation/files to a message (shared by stream + fallback).
+      _applyReply(m, d) {
+        const issues = (d.validation && d.validation.playbook_issues) || [];
+        if (d.reply !== undefined) m.content = d.reply || m.content || "(empty response)";
+        m.issues = issues; m.playbook_issues = issues;   // dock uses `issues`, page uses `playbook_issues`
+        m.invalid_modules = (d.validation && d.validation.invalid_modules) || [];
+        m.uninstalled_modules = (d.validation && d.validation.uninstalled_modules) || [];
+        m.files = d.files || [];
+        this.provider = d.provider || this.provider; this.model = d.model || this.model;
+      },
       async send() {
         const t = this.input.trim(); if (!t || this.busy) return;
         this.messages.push({role: "user", content: t}); this.input = ""; this.busy = true; this.persist(); this.scroll();
+        const history = this.messages.filter(m => !m.streaming).map(m => ({role: m.role, content: m.content}));
+        // Live placeholder we append tokens to. Re-fetch the reactive proxy after push.
+        this.messages.push({role: "assistant", content: "", streaming: true,
+                            issues: [], playbook_issues: [], invalid_modules: [], uninstalled_modules: [], files: []});
+        const m = this.messages[this.messages.length - 1];
         try {
-          const r = await fetch("/api/ai/chat", {
+          const r = await fetch("/api/ai/chat/stream", {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({messages: this.messages.map(m => ({role: m.role, content: m.content})), project_id: this.projectId}),
+            body: JSON.stringify({messages: history, project_id: this.projectId}),
           });
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok) { this.messages.push({role: "assistant", content: "⚠️ " + (d.detail || "request failed")}); return; }
-          const issues = (d.validation && d.validation.playbook_issues) || [];
-          this.messages.push({
-            role: "assistant", content: d.reply || "(empty response)",
-            issues, playbook_issues: issues,   // dock uses `issues`, page uses `playbook_issues`
-            invalid_modules: (d.validation && d.validation.invalid_modules) || [],
-            uninstalled_modules: (d.validation && d.validation.uninstalled_modules) || [],
-            files: d.files || [],
-          });
-          this.provider = d.provider || this.provider; this.model = d.model || this.model;
-        } finally { this.busy = false; this.persist(); this.scroll(); }
+          if (!r.ok || !r.body) throw new Error("stream unavailable");
+          const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+          while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, {stream: true});
+            let nl;
+            while ((nl = buf.indexOf("\n")) >= 0) {
+              const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+              if (!line) continue;
+              let ev; try { ev = JSON.parse(line); } catch (e) { continue; }
+              if (ev.type === "token") { m.content += ev.text; this.scroll(); }
+              else if (ev.type === "done") { this._applyReply(m, ev); }
+              else if (ev.type === "error") { m.content = "⚠️ " + ev.message; }
+            }
+          }
+        } catch (e) {
+          // Fallback to the non-streaming endpoint if streaming failed before any token.
+          if (!m.content) {
+            try {
+              const r2 = await fetch("/api/ai/chat", {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({messages: history, project_id: this.projectId}),
+              });
+              const d = await r2.json().catch(() => ({}));
+              if (!r2.ok) m.content = "⚠️ " + (d.detail || "request failed");
+              else this._applyReply(m, d);
+            } catch (e2) { m.content = "⚠️ chat failed"; }
+          }
+        } finally {
+          m.streaming = false; this.busy = false; this.persist(); this.scroll();
+        }
       },
       async sendAgent() {
         const t = this.input.trim(); if (!t || this.busy) return;
@@ -343,6 +379,20 @@
         if ((m.needed || []).includes("mutate")) this.allowMutate = true;
         if ((m.needed || []).includes("confirm")) { this.allowConfirm = true; this.allowMutate = true; }
         this.input = m.goal; this.persist(); this.sendAgent();
+      },
+      // One-click remediation from a failed run: open the dock in agent mode and
+      // let the agent read the run, fix the playbook, and preview it.
+      fixRun(projectId, runId) {
+        this.mode = "agent";
+        this.agentProject = projectId;
+        this.allowMutate = true;     // it needs to edit files
+        this.open = true;
+        this.input = `Run #${runId} failed. Use get_run to read run ${runId}, find the root `
+          + `cause, fix the playbook file(s) in this project, then preview the playbook to `
+          + `confirm the fix. Do not run it for real.`;
+        this.persist();
+        this.scroll();
+        this.sendAgent();
       },
 
       // ---- save snippet to a project ----
