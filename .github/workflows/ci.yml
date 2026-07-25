@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: cicd-sensor/cicd-sensor-action@2b76335ff1c2dd298e983961f7a200d3fe9076c2 # v0.0.36
+
       - uses: actions/checkout@v4
 
       - name: Build app image
@@ -68,6 +70,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: cicd-sensor/cicd-sensor-action@2b76335ff1c2dd298e983961f7a200d3fe9076c2 # v0.0.36
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
