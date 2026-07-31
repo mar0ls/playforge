@@ -1,0 +1,20 @@
+name: SSH key installed before password auth is disabled
+why: >
+  Negative case for the ordering rule — this is the correct sequence and must
+  stay silent.
+content: |
+  ---
+  - hosts: all
+    become: true
+    tasks:
+      - name: Install operator key
+        ansible.posix.authorized_key:
+          user: deploy
+          key: "ssh-ed25519 AAAAC3Nz operator@example"
+      - name: Harden sshd
+        ansible.builtin.lineinfile:
+          path: /etc/ssh/sshd_config
+          regexp: '^PasswordAuthentication'
+          line: 'PasswordAuthentication no'
+expect_rules: []
+expect_absent: [ssh-lockout-password-auth]

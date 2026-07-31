@@ -1,0 +1,20 @@
+name: User created and removed in the same play
+why: >
+  Destructive op plus a contradiction. The play's net effect depends on task
+  order, which is exactly the kind of thing a reviewer skims past.
+content: |
+  ---
+  - hosts: dbservers
+    become: true
+    tasks:
+      - name: Create service account
+        ansible.builtin.user:
+          name: legacyapp
+          state: present
+      - name: Remove old account
+        ansible.builtin.user:
+          name: legacyapp
+          state: absent
+expect_rules:
+  - user-removed
+  - user-contradictory-state

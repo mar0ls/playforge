@@ -27,8 +27,30 @@ _TASK_DIRECTIVES = {
 }
 
 
-def _finding(severity: str, message: str) -> dict:
-    return {"severity": severity, "message": message}
+# Stable identifiers for every rule. Findings used to carry only a severity and a
+# prose message, so anything asserting on them (tests, the golden set in
+# tests/golden/) broke whenever the wording changed. `rule` is what you match on;
+# `message` stays free to be reworded.
+RULE_PLAY_NOT_MAPPING = "play-not-mapping"
+RULE_PLAY_MISSING_HOSTS = "play-missing-hosts"
+RULE_PLAY_VARS_NOT_MAPPING = "play-vars-not-mapping"
+RULE_TASK_NO_MODULE = "task-no-module"
+RULE_LISTEN_OUTSIDE_HANDLERS = "listen-outside-handlers"
+RULE_SSH_LOCKOUT = "ssh-lockout-password-auth"
+RULE_USER_REMOVED = "user-removed"
+RULE_USER_CONTRADICTORY = "user-contradictory-state"
+RULE_UFW_LOCKOUT = "ufw-lockout-no-ssh"
+RULE_INVALID_YAML = "invalid-yaml"
+
+ALL_RULES = {
+    RULE_PLAY_NOT_MAPPING, RULE_PLAY_MISSING_HOSTS, RULE_PLAY_VARS_NOT_MAPPING,
+    RULE_TASK_NO_MODULE, RULE_LISTEN_OUTSIDE_HANDLERS, RULE_SSH_LOCKOUT,
+    RULE_USER_REMOVED, RULE_USER_CONTRADICTORY, RULE_UFW_LOCKOUT, RULE_INVALID_YAML,
+}
+
+
+def _finding(severity: str, message: str, rule: str) -> dict:
+    return {"severity": severity, "message": message, "rule": rule}
 
 
 def _as_list(value) -> list:
@@ -122,17 +144,17 @@ def _load_role_tasks(project_root: Path, role: str) -> list[dict]:
 
 def _check_play(play, idx: int, project_root: Path | None = None, *, require_hosts: bool = True) -> list[dict]:
     if not isinstance(play, dict):
-        return [_finding("error", f"play {idx}: is not a mapping")]
+        return [_finding("error", f"play {idx}: is not a mapping", RULE_PLAY_NOT_MAPPING)]
     findings: list[dict] = []
 
     # --- structural constraints ---
     if require_hosts and "hosts" not in play and "import_playbook" not in play:
-        findings.append(_finding("error", f"play {idx}: missing 'hosts'"))
+        findings.append(_finding("error", f"play {idx}: missing 'hosts'", RULE_PLAY_MISSING_HOSTS))
     pvars = play.get("vars")
     if pvars is not None and not isinstance(pvars, dict):
         findings.append(_finding(
             "error", f"play {idx}: 'vars' must be a mapping, not a {type(pvars).__name__} "
-                     "— remove the '-' before each variable"))
+                     "— remove the '-' before each variable", RULE_PLAY_VARS_NOT_MAPPING))
 
     tasks = _as_list(play.get("tasks"))
     handlers = _as_list(play.get("handlers"))
@@ -154,14 +176,15 @@ def _check_play(play, idx: int, project_root: Path | None = None, *, require_hos
         if not isinstance(t, dict) or "block" in t:
             continue
         if not _module_keys(t):
-            findings.append(_finding("error", f"task '{t.get('name', '?')}': no module specified"))
+            findings.append(_finding("error", f"task '{t.get('name', '?')}': no module specified",
+                                     RULE_TASK_NO_MODULE))
 
     # --- handler misuse: `listen` only valid inside handlers: ---
     for t in ordered:
         if isinstance(t, dict) and "listen" in t:
             findings.append(_finding(
                 "warning", f"task '{t.get('name', '?')}': 'listen' only works inside 'handlers:', "
-                           "not 'tasks:' — move it to a handlers section"))
+                           "not 'tasks:' — move it to a handlers section", RULE_LISTEN_OUTSIDE_HANDLERS))
 
     # --- ordering constraint: don't disable passwords before a key is installed ---
     seen_key = False
@@ -173,7 +196,7 @@ def _check_play(play, idx: int, project_root: Path | None = None, *, require_hos
         if _disables_password_auth(t) and not seen_key:
             findings.append(_finding(
                 "warning", f"task '{t.get('name', '?')}': disables password auth, but no SSH key "
-                           "was added earlier in this play — risk of locking yourself out"))
+                           "was added earlier in this play — risk of locking yourself out", RULE_SSH_LOCKOUT))
 
     # --- destructive ops + contradictions on users ---
     user_states: dict[str, set] = {}
@@ -185,12 +208,14 @@ def _check_play(play, idx: int, project_root: Path | None = None, *, require_hos
             continue
         if state == "absent":
             findings.append(_finding(
-                "warning", f"task '{t.get('name', '?')}': removes user '{name}' (state: absent) — destructive"))
+                "warning", f"task '{t.get('name', '?')}': removes user '{name}' (state: absent) — destructive",
+                RULE_USER_REMOVED))
         user_states.setdefault(str(name), set()).add(state)
     for uname, states in user_states.items():
         if "absent" in states and len(states) > 1:
             findings.append(_finding(
-                "warning", f"user '{uname}' is both modified/created and removed in the same play — contradictory"))
+                "warning", f"user '{uname}' is both modified/created and removed in the same play — contradictory",
+                RULE_USER_CONTRADICTORY))
 
     # --- firewall lockout: UFW default-deny incoming without an SSH allow rule ---
     ufw_default_deny = any(
@@ -202,7 +227,8 @@ def _check_play(play, idx: int, project_root: Path | None = None, *, require_hos
     if ufw_default_deny and not ufw_allows_ssh:
         findings.append(_finding(
             "warning", "UFW sets default deny for incoming traffic but no rule allows SSH — "
-                       "you may lock yourself out; add an `allow` rule for port 22 before enabling"))
+                       "you may lock yourself out; add an `allow` rule for port 22 before enabling",
+            RULE_UFW_LOCKOUT))
 
     return findings
 
@@ -250,7 +276,7 @@ def check_text(text: str, project_root: Path | None = None) -> list[dict]:
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as e:
-        return [_finding("error", f"invalid YAML: {str(e).splitlines()[0]}")]
+        return [_finding("error", f"invalid YAML: {str(e).splitlines()[0]}", RULE_INVALID_YAML)]
     return check_doc(doc, project_root)
 
 

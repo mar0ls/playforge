@@ -1,0 +1,23 @@
+name: Task with no module, vars as a list, listen outside handlers
+why: >
+  The malformed-structure family in one realistic-looking play. Models produce
+  `vars:` as a list surprisingly often (copying task syntax), and the error
+  ansible gives back for it is unhelpful enough that users blame the tool.
+content: |
+  ---
+  - hosts: all
+    vars:
+      - app_port: 8080
+      - app_user: deploy
+    tasks:
+      - name: Task that forgot its module
+        when: app_port is defined
+      - name: Reload something
+        ansible.builtin.service:
+          name: nginx
+          state: reloaded
+        listen: "restart web"
+expect_rules:
+  - play-vars-not-mapping
+  - task-no-module
+  - listen-outside-handlers

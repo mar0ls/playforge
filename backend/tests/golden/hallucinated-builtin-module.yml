@@ -1,0 +1,24 @@
+name: ansible.builtin.ufw does not exist; community.general.ufw does
+why: >
+  The anti-hallucination example the README leads with. ufw lives in
+  community.general, so `ansible.builtin.ufw` is a genuine invention — and
+  ansible-core ships the complete builtin set, so absence there is conclusive.
+  Note `ansible-doc ansible.builtin.ufw` *succeeds* via ansible-core's routing
+  redirect; the validator uses the canonical module list instead, which is why
+  this case is worth pinning.
+content: |
+  ---
+  - hosts: all
+    become: true
+    tasks:
+      - name: Allow ssh with the wrong namespace
+        ansible.builtin.ufw:
+          rule: allow
+          port: "22"
+      - name: Allow http with the right one
+        community.general.ufw:
+          rule: allow
+          port: "80"
+expect_rules: []
+expect_invalid_modules: [ansible.builtin.ufw]
+expect_uninstalled_modules: []

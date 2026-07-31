@@ -1,0 +1,14 @@
+name: Malformed YAML
+why: >
+  The validator must report a parse failure as a finding rather than raising —
+  the agent's finish gate depends on getting a structured answer back.
+content: |
+  ---
+  - hosts: all
+    tasks:
+      - name: Broken
+        ansible.builtin.debug:
+          msg: "unterminated
+        register: out
+       bad_indent: true
+expect_rules: [invalid-yaml]

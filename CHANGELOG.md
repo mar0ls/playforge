@@ -3,6 +3,37 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.3.0] — 2026-08-01
+
+Measurement for the AI layer, and provider calls that survive a rate limit.
+
+### Added
+- **Golden set for the self-checking layers** (`backend/tests/golden/`, harness in
+  `tests/test_golden_rules.py`). Ten cases pinning the rule engine and the module
+  validator, as data files rather than code, so adding a regression case is one
+  file. The AI tests all mock the provider, which meant nothing measured whether
+  the *checking* still worked when a prompt or model changed — this closes that.
+  Deterministic and offline: a failure here is ours, not the model's.
+  The harness also fails when a rule has no case, so the set can't rot silently.
+- **Stable `rule` ids on findings.** `playbook_rules` findings carried only a
+  severity and a prose message, so any assertion on them broke when the wording
+  changed. Findings now also carry `rule` (e.g. `ufw-lockout-no-ssh`), which is
+  what the golden set matches on. Additive — existing consumers read `message`
+  and `severity` and are unaffected.
+- **Retry with backoff for transient provider failures.** A 429 from a hosted
+  provider, or a 503 while Ollama loads a model, used to surface as a hard error;
+  there was no retry anywhere in the AI layer. Now 408/409/425/429/5xx and
+  transport errors get up to 3 attempts with exponential backoff and jitter, and
+  `Retry-After` is honoured (capped at 30s). 4xx config and auth errors are never
+  retried — a wrong API key should fail immediately, not look like a hang.
+  Streams retry only until the first token, since after that the text is already
+  on screen and a retry would duplicate it. The Anthropic SDK does its own
+  retrying, so its budget is set explicitly rather than stacked with ours.
+
+### Notes
+Coverage of `app/core/ai/providers.py` went from 34% to 58%; the suite is 446
+tests, up from 407.
+
 ## [0.2.0] — 2026-07-31
 
 Reproducible builds; air-gap and ad-hoc gaps closed.
