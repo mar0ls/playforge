@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app import __version__
 from app.core import auth
 
 from app.api import projects as projects_api
@@ -22,12 +24,14 @@ from app.api import environments as environments_api
 from app.core.scheduler import get_scheduler, load_all as load_schedules
 from app.core.config import settings
 from app.core import doc_index
-from app.models.db import init_db
+from app.models.db import init_db, SCHEMA_VERSION
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # Available in every template so the nav can show a Logout link only when auth is on.
 templates.env.globals["auth_enabled"] = auth.auth_enabled
+# So the sidebar footer reports the real running version instead of a hardcoded one.
+templates.env.globals["app_version"] = __version__
 
 
 @asynccontextmanager
@@ -46,7 +50,7 @@ async def lifespan(app: FastAPI):
 
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Playforge", lifespan=lifespan)
+app = FastAPI(title="Playforge", version=__version__, lifespan=lifespan)
 
 
 # Paths reachable without a session (login itself, static assets, health probe).
@@ -71,6 +75,18 @@ async def require_login(request: Request, call_next):
 
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+# Monaco is baked into the image at /opt/playforge/vendor (see Dockerfile) rather
+# than under app/static, so the dev compose override's bind-mount of backend/app
+# can't hide it. Missing outside the image — the editor is the only thing affected,
+# so warn instead of refusing to start.
+VENDOR_DIR = Path(os.getenv("PLAYFORGE_VENDOR_DIR", "/opt/playforge/vendor"))
+if VENDOR_DIR.is_dir():
+    app.mount("/vendor", StaticFiles(directory=str(VENDOR_DIR)), name="vendor")
+else:
+    logging.getLogger(__name__).warning(
+        "vendor dir %s not found — the Monaco editor won't load. Run the app from the "
+        "Docker image, or set PLAYFORGE_VENDOR_DIR.", VENDOR_DIR)
 app.include_router(projects_api.router)
 app.include_router(runs_api.router)
 app.include_router(dashboard_api.router)
@@ -99,6 +115,8 @@ async def health():
 
     payload = {
         "status": "ok" if db_ok else "degraded",
+        "version": __version__,
+        "schema_version": SCHEMA_VERSION,
         "data_dir": str(settings.data_dir),
         "db": "ok" if db_ok else "error",
     }

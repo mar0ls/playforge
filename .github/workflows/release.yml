@@ -1,0 +1,157 @@
+name: Release
+
+# Publishes the multi-arch image to Docker Hub when a `v*` tag is pushed, so
+# users run `docker compose up -d` against a published image instead of building
+# from source.
+#
+# arm64 is not optional here: the primary dev machine is Apple Silicon, and
+# emulating amd64 for every local `docker compose up` is slow enough that people
+# would go back to building locally.
+#
+# Release flow:
+#   1. bump `__version__` in backend/app/__init__.py + add the CHANGELOG section
+#   2. git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag/version/CHANGELOG agreement is enforced here, in the step below — not
+# by CI. The CI suite runs inside the image, where CHANGELOG.md isn't present, so
+# backend/tests/test_version.py skips that assertion there (it does check it when
+# run against a repo checkout, e.g. locally).
+#
+# Tags are computed in one shell step rather than via docker/metadata-action,
+# which derives the version by parsing `github.ref`. That is correct for tag
+# pushes and wrong for `workflow_dispatch`, where `github.ref` is the *branch*
+# the workflow was dispatched from, not the tag being released.
+#
+# Required repository secrets:
+#   DOCKERHUB_USERNAME  Docker Hub account
+#   DOCKERHUB_TOKEN     Docker Hub access token with Read/Write (NOT the password)
+
+"on":
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to (re)publish"
+        required: true
+
+env:
+  IMAGE: docker.io/mar0ls/playforge
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # for the GitHub Release
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      # The tag is the source of truth for what gets published, so a tag that
+      # disagrees with the code is a release bug — fail before anything is pushed.
+      - name: Resolve version and image tags
+        id: v
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$RAW_TAG" in
+            v*) ;;
+            *) echo "::error::expected a v-prefixed tag, got '$RAW_TAG'"; exit 1 ;;
+          esac
+          version="${RAW_TAG#v}"
+
+          code="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' backend/app/__init__.py)"
+          if [ "$version" != "$code" ]; then
+            echo "::error::tag $RAW_TAG does not match __version__ '$code' in backend/app/__init__.py"
+            exit 1
+          fi
+          if ! grep -q "\[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no [$version] section"
+            exit 1
+          fi
+
+          # A prerelease (0.1.0-rc1) publishes only its own exact tag; it must
+          # never move `latest` or the major.minor alias that users track.
+          tags="$IMAGE:$version"
+          case "$version" in
+            *-*) echo "prerelease — publishing $version only" ;;
+            *)   tags="$tags,$IMAGE:${version%.*},$IMAGE:latest" ;;
+          esac
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Publishing: $tags"
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./backend
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.v.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=Playforge
+            org.opencontainers.image.description=Self-hosted web UI for managing and running Ansible, with a self-checking AI layer
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+            org.opencontainers.image.source=https://github.com/mar0ls/playforge
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=GPL-3.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A published image that doesn't boot is worse than no release. Pull the
+      # freshly pushed image back and check /health actually answers, reports the
+      # version we just tagged, and has run its migrations.
+      - name: Smoke-test the published image
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke -p 8765:8765 -e ANSIBLE_GUI_DATA_DIR=/data "$IMAGE:$VERSION"
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health -o /tmp/health.json 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [ ! -s /tmp/health.json ]; then
+            echo "::error::/health never answered"; docker logs smoke; exit 1
+          fi
+          cat /tmp/health.json
+          python3 - <<'PY'
+          import json, os, sys
+          h = json.load(open("/tmp/health.json"))
+          want = os.environ["VERSION"]
+          if h.get("version") != want:
+              sys.exit(f"::error::/health reports version {h.get('version')!r}, expected {want!r}")
+          if h.get("status") != "ok":
+              sys.exit(f"::error::/health status is {h.get('status')!r}")
+          if not isinstance(h.get("schema_version"), int):
+              sys.exit(f"::error::/health schema_version is {h.get('schema_version')!r}")
+          print("smoke ok:", h)
+          PY
+          docker rm -f smoke
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          body: |
+            ```bash
+            docker pull ${{ env.IMAGE }}:${{ steps.v.outputs.version }}
+            ```
+
+            See [CHANGELOG.md](https://github.com/mar0ls/playforge/blob/main/CHANGELOG.md) for what changed.

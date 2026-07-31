@@ -1,7 +1,15 @@
-.PHONY: build up down logs shell test test-fixture lab-regression clean
+.PHONY: build lock up down logs shell test test-fixture lab-regression backup restore clean
 
 build:
 	docker compose build
+
+# Regenerate backend/requirements.lock from requirements.txt. Runs in a linux
+# container so the resolution matches the image, not the dev machine.
+lock:
+	docker run --rm -v $(PWD)/backend:/w -w /w python:3.12-slim sh -c "\
+	  pip install -q pip-tools && \
+	  pip-compile --generate-hashes --quiet --output-file=requirements.lock requirements.txt"
+	@echo "Wrote backend/requirements.lock — rebuild with 'make build'."
 
 up:
 	docker compose up -d
@@ -38,6 +46,20 @@ lab-regression:
 	fi
 	./scripts/lab_regression.sh
 
+# Snapshot ./data (db + master key + project repos) to ./backups. Safe while running.
+backup:
+	./scripts/backup.sh
+
+# Restore a snapshot: make restore ARCHIVE=backups/playforge-backup-*.tar.gz
+# Stop the app first (`make down`).
+restore:
+	@if [ -z "$(ARCHIVE)" ]; then \
+	  echo "ARCHIVE is required, example: ARCHIVE=backups/playforge-backup-0.1.0-*.tar.gz make restore"; \
+	  exit 2; \
+	fi
+	./scripts/restore.sh $(ARCHIVE)
+
+# Destroys local state. Take a `make backup` first — this is not recoverable.
 clean:
 	docker compose down -v
 	rm -rf data/projects/* data/app.db

@@ -89,7 +89,7 @@
     </form>
     {% endif %}
     <div class="footer-note">
-      v0.1 &middot; <span class="muted">{% if auth_enabled() %}protected{% else %}single-user mode{% endif %}</span>
+      v{{ app_version }} &middot; <span class="muted">{% if auth_enabled() %}protected{% else %}single-user mode{% endif %}</span>
     </div>
   </aside>
 

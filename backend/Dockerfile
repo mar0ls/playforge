@@ -33,8 +33,12 @@ RUN git config --system user.email "playforge@localhost" \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Install from the lock, not requirements.txt: the latter is floor-pinned (>=), so
+# two builds of the same git tag could otherwise ship different dependency versions.
+# --require-hashes also fails the build if a package doesn't match its recorded hash.
+# Regenerate after editing requirements.txt: make lock
+COPY requirements.txt requirements.lock ./
+RUN pip install --require-hashes -r requirements.lock
 
 # Bake popular Ansible collections into a system-wide path so `ansible-doc` (and
 # thus the assistant's RAG/anti-hallucination layer) knows the modules people
@@ -43,6 +47,23 @@ COPY collections.yml .
 RUN ansible-galaxy collection install -r collections.yml -p /usr/share/ansible/collections \
     && chmod -R a+rX /usr/share/ansible/collections
 ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections
+
+# Monaco, vendored so the editor works with no internet (the rest of the frontend
+# is already local). Kept outside /app/app because the dev compose override
+# bind-mounts the host's backend/app over it, which would hide anything baked in
+# there. Served at /vendor by main.py; ~14 MB for min/vs alone (the full package
+# is ~80 MB, hence min/ only).
+ARG MONACO_VERSION=0.52.0
+ARG MONACO_SHA256=5dbda58750b13452de39affcea703af096022d8e3546c67ed5d3bd072763f939
+RUN set -eux; \
+    curl -fsSL "https://registry.npmjs.org/monaco-editor/-/monaco-editor-${MONACO_VERSION}.tgz" -o /tmp/monaco.tgz; \
+    echo "${MONACO_SHA256}  /tmp/monaco.tgz" | sha256sum -c -; \
+    mkdir -p /opt/playforge/vendor/monaco; \
+    tar xzf /tmp/monaco.tgz -C /tmp; \
+    cp -r /tmp/package/min/vs /opt/playforge/vendor/monaco/vs; \
+    cp /tmp/package/LICENSE /opt/playforge/vendor/monaco/LICENSE; \
+    rm -rf /tmp/monaco.tgz /tmp/package; \
+    chmod -R a+rX /opt/playforge/vendor
 
 COPY app ./app
 RUN chown -R app:app /app

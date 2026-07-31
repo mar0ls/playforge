@@ -1,5 +1,8 @@
 services:
   app:
+    # Builds from source. The Release workflow (.github/workflows/release.yml) is
+    # wired up but stays unused until 0.9, when the image starts being published to
+    # Docker Hub; at that point this becomes `image: mar0ls/playforge:...`.
     build:
       context: ./backend
       dockerfile: Dockerfile

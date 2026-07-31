@@ -113,50 +113,56 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
     if not base.get("playbook"):
         raise HTTPException(400, "playbook is required (directly or via a template)")
 
-    # Resolve credentials: pick the first SSH-key credential and inject its content.
-    if credential_ids:
-        async with SessionLocal() as session:
-            creds = (await session.execute(
-                select(Credential).where(Credential.id.in_(credential_ids))
-            )).scalars().all()
-        for c in creds:
-            if c.kind == "ssh_key":
-                content = cred_store.read_secret(c.id)
-                if content:
-                    base["ssh_key_content"] = content
-                break  # ansible-runner supports one ssh_key per run; first wins
-        for c in creds:
-            if c.kind == "ssh_password":
-                pw = cred_store.read_secret(c.id)
-                if pw:
-                    base["ssh_password_content"] = pw.rstrip("\n")
-                break  # one SSH login password per run; first wins
-        for c in creds:
-            if c.kind == "vault_password":
-                vpass = cred_store.read_secret(c.id)
-                if vpass:
-                    base["vault_password_content"] = vpass.rstrip("\n")
-                break  # one vault password per run; first wins
-        for c in creds:
-            if c.kind == "become_password":
-                bpass = cred_store.read_secret(c.id)
-                if bpass:
-                    base["become_password_content"] = bpass.rstrip("\n")
-                break  # one become password per run; first wins
-        # WireGuard keys (and any other key material the playbook needs as a file)
-        # are written to a 0600 temp dir at run time; their paths are exposed as
-        # extra-vars `wireguard_keys` (name -> path) so a playbook can reference them.
-        wg: dict[str, str] = {}
-        for c in creds:
-            if c.kind != "wireguard_key":
-                continue
-            secret = cred_store.read_secret(c.id)   # read+decrypt once per credential
-            if secret:
-                wg[c.name] = secret
-        if wg:
-            base["wireguard_keys"] = wg
+    base.update(await _resolve_credentials(credential_ids))
 
     return RunRequest(**base), environment_id
+
+
+async def _resolve_credentials(credential_ids: list[int]) -> dict:
+    """Credential ids → decrypted RunRequest fields.
+
+    Shared by the playbook path and the ad-hoc endpoint so the two can't drift —
+    ad-hoc used to accept no credentials at all, which made it fail on exactly the
+    hosts a normal run could reach.
+    """
+    if not credential_ids:
+        return {}
+
+    async with SessionLocal() as session:
+        creds = (await session.execute(
+            select(Credential).where(Credential.id.in_(credential_ids))
+        )).scalars().all()
+
+    out: dict = {}
+    # ansible-runner takes one of each per run; first of a kind wins.
+    for kind, field, strip in (
+        ("ssh_key", "ssh_key_content", False),
+        ("ssh_password", "ssh_password_content", True),
+        ("vault_password", "vault_password_content", True),
+        ("become_password", "become_password_content", True),
+    ):
+        for c in creds:
+            if c.kind != kind:
+                continue
+            secret = cred_store.read_secret(c.id)
+            if secret:
+                out[field] = secret.rstrip("\n") if strip else secret
+            break
+
+    # WireGuard keys (and any other key material the playbook needs as a file) are
+    # written to a 0600 temp dir at run time; their paths are exposed as the
+    # `wireguard_keys` extra-var (name -> path) so a playbook can reference them.
+    wg: dict[str, str] = {}
+    for c in creds:
+        if c.kind != "wireguard_key":
+            continue
+        secret = cred_store.read_secret(c.id)   # read+decrypt once per credential
+        if secret:
+            wg[c.name] = secret
+    if wg:
+        out["wireguard_keys"] = wg
+
+    return out
 
 
 def _error_text(f: dict) -> str:
@@ -593,12 +599,24 @@ class AdhocIn(BaseModel):
     module: str = "ping"
     args: str = ""
     inventory: str = ""
+    credential_ids: list[int] = []
 
 
 @router.post("/adhoc")
 async def adhoc(payload: AdhocIn):
-    result = await run_adhoc(payload.project_id, payload.host_pattern,
-                             payload.module, payload.args, payload.inventory)
+    try:
+        storage.paths_for(payload.project_id)
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+    creds = await _resolve_credentials(payload.credential_ids)
+    result = await run_adhoc(
+        payload.project_id, payload.host_pattern,
+        payload.module, payload.args, payload.inventory,
+        ssh_key_content=creds.get("ssh_key_content", ""),
+        ssh_password_content=creds.get("ssh_password_content", ""),
+        become_password_content=creds.get("become_password_content", ""),
+    )
     return summarize(result)
 
 

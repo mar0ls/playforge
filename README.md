@@ -92,6 +92,9 @@ cp .env.example .env   # optional — for a password, AI keys, etc.
 docker compose up --build -d   # → http://127.0.0.1:8765
 ```
 
+`curl -s localhost:8765/health` reports the running version and schema version.
+(Prebuilt images land on Docker Hub at 0.9; until then it builds from source.)
+
 The `.env` step is optional: with no `.env` the app runs single-user/local with no
 AI. Configure the AI helper under **Settings → AI helper** at runtime, or set
 `OLLAMA_URL` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in `.env`. State (projects,
@@ -105,6 +108,39 @@ git repos, SQLite) lives under `./data` on the host and survives rebuilds.
   commented `/import/*` examples in `docker-compose.yml`).
 - **Naming note**: the image and container are `playforge`; environment variables
   keep the `ANSIBLE_GUI_*` prefix for backward compatibility.
+
+## Upgrading & backups
+
+State lives in `./data`: the SQLite DB, one git repo per project, and `master.key`
+— the key the credential vault is encrypted with. **Lose `master.key` and the
+stored credentials are gone.**
+
+```bash
+scripts/backup.sh                    # → ./backups/playforge-backup-<version>-<stamp>.tar.gz
+docker compose up --build -d
+curl -s localhost:8765/health        # version + schema_version
+```
+
+Backups are safe to take while the app runs — the DB goes through SQLite's online
+backup API, so it can't catch a half-written transaction. The archive is `0600`
+and contains the master key and your project repos; encrypt it before it leaves
+the host:
+
+```bash
+gpg --symmetric --cipher-algo AES256 backups/playforge-backup-*.tar.gz
+```
+
+Schema migrations run on start and are recorded in the DB, so upgrading across
+several versions at once is fine. Downgrading isn't supported — an older build
+against a newer database logs a warning rather than half-working. To go back:
+
+```bash
+docker compose down
+scripts/restore.sh backups/playforge-backup-0.1.0-<stamp>.tar.gz
+```
+
+`restore.sh` won't overwrite a populated `./data` without `--force`, and moves the
+existing directory aside rather than deleting it.
 
 ## Try the self-checking loop
 
@@ -121,17 +157,34 @@ confirm. (To record a GIF, screen-capture the browser during that step.)
 ## Development
 
 ```bash
-make build      # build the image
+make build      # build playforge:dev from source (via the dev override)
 make test       # run the full suite inside the image (git + ansible available)
 make up / down  # start / stop
+make backup     # snapshot ./data before you break something
 ```
 
-For live code reload while developing, layer the dev override (bind-mounts
-`backend/app` and runs uvicorn with `--reload`):
+For live code reload while developing, layer the dev override (adds the build
+context, bind-mounts `backend/app`, runs uvicorn with `--reload`):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
+
+### Releasing
+
+Version lives in exactly one place: `__version__` in `backend/app/__init__.py`.
+
+1. Bump it and add the matching `## [x.y.z]` section to `CHANGELOG.md`.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+If the tag, `__version__` and `CHANGELOG.md` don't agree, the release fails before
+anything is pushed to Docker Hub. (That check lives in the workflow, not in CI —
+CI runs the suite inside the image, where `CHANGELOG.md` isn't present.)
+
+The `Release` workflow verifies the tag agrees with the code, builds and pushes
+`amd64` + `arm64` to Docker Hub, pulls the published image back to check `/health`
+answers with the version it just tagged, and then opens the GitHub Release. It
+needs two repository secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 The container exposes `GET /health` (DB ping included). The base compose wires
 a Docker healthcheck against it, so `docker ps` shows `(healthy)` once the
@@ -169,9 +222,13 @@ The test suite (370+ cases) runs in CI on every push and PR — see
 
 ## Design notes
 
-- **Air-gap friendly**: core UI JS libraries are vendored locally and AI can run
-  against a local Ollama. By default, online docs lookup is off. Note: the Monaco
-  editor assets are loaded from jsDelivr unless you vendor Monaco yourself.
+- **Air-gap**: no runtime network calls. All UI JS (including the Monaco editor) is
+  served from the image, popular Galaxy collections are baked in for `ansible-doc`,
+  and AI can run against a local Ollama. Online docs lookup is off by default and
+  is the only thing that reaches the internet when you turn it on.
+- **Reproducible builds**: Python deps install from `backend/requirements.lock`
+  with `--require-hashes`; Monaco is fetched at build time against a pinned
+  SHA-256. The same git tag produces the same image.
 - **No heavy infra**: SQLite (WAL mode), in-process scheduler, direct runner.
   One container.
 - Third-party components are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

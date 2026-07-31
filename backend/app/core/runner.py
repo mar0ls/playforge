@@ -334,8 +334,19 @@ def run_playbook_sync(req: RunRequest) -> RunResult:
 
 async def run_adhoc(project_id: str, host_pattern: str, module: str, args: str = "",
                     inventory: str = "",
-                    on_event: Callable[[dict], None] | None = None) -> RunResult:
-    """Run an ad-hoc command (default use: `ansible <pattern> -m ping`)."""
+                    on_event: Callable[[dict], None] | None = None,
+                    *,
+                    ssh_key_content: str = "",
+                    ssh_password_content: str = "",
+                    become_password_content: str = "") -> RunResult:
+    """Run an ad-hoc command (default use: `ansible <pattern> -m ping`).
+
+    Credentials are injected the same way as `run_playbook` — key via ansible-runner's
+    `ssh_key`, SSH password as the `ansible_password` extravar (sshpass is in the
+    image), become password through a 0600 file. Without them, ad-hoc against hosts
+    that need key or sudo auth fails with "Permission denied" while a normal run of
+    the same project succeeds.
+    """
     loop = asyncio.get_running_loop()
     private_data_dir = Path(tempfile.mkdtemp(prefix="ansible-adhoc-"))
     pp = storage.paths_for(project_id)
@@ -353,7 +364,7 @@ async def run_adhoc(project_id: str, host_pattern: str, module: str, args: str =
         return True
 
     def _run_blocking():
-        adhoc_kwargs = dict(
+        adhoc_kwargs: dict = dict(
             private_data_dir=str(private_data_dir),
             host_pattern=host_pattern,
             module=module,
@@ -364,6 +375,22 @@ async def run_adhoc(project_id: str, host_pattern: str, module: str, args: str =
         )
         if inventory_path is not None:
             adhoc_kwargs["inventory"] = str(inventory_path)
+
+        extravars: dict = {}
+        if ssh_password_content:
+            extravars["ansible_password"] = ssh_password_content
+        if extravars:
+            adhoc_kwargs["extravars"] = extravars
+
+        if become_password_content:
+            become_file = private_data_dir / "become_pass"
+            become_file.write_text(become_password_content)
+            become_file.chmod(0o600)
+            adhoc_kwargs["cmdline"] = f"--become-password-file {become_file}"
+
+        if ssh_key_content:
+            adhoc_kwargs["ssh_key"] = ssh_key_content
+
         return ansible_runner.run(**adhoc_kwargs)
 
     try:
