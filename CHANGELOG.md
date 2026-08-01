@@ -3,6 +3,44 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.4.0] — 2026-08-01
+
+Tests for the HTTP and scheduler edges. Two bugs found doing it.
+
+### Fixed
+- **Schedules with no timezone fired in the container's local zone, not UTC.**
+  `''` means UTC per the API, the model comment and the docstring, but
+  `CronTrigger.from_crontab()` with no timezone falls back to the *process* local
+  zone. With `TZ` unset (the default image) that happens to be UTC, so it looked
+  fine; set `TZ` on the container — a normal thing to do — and every schedule that
+  didn't name a timezone shifted. Worse, `next_fire_iso` computes blank-timezone
+  times in real UTC, so the "next fire" in the UI disagreed with when the job
+  actually ran. UTC is now passed explicitly.
+- **`file_at` dropped the trailing newline of every historical version.**
+  GitPython strips it from command output, so "View / Restore past version"
+  handed back content that differed from what was committed. Reads now use
+  `strip_newline_in_stdout=False`.
+
+### Added
+- `tests/test_scheduler.py` — `_fire` was entirely untested: the path that turns a
+  cron tick into a Run row, including a failing runner (which must still close the
+  Run row, or the UI shows "running" forever), a disabled schedule, and a template
+  deleted out from under a schedule. Plus cron/timezone validation, job sync, and
+  DST behaviour around the Europe/Warsaw spring-forward.
+- `tests/test_credentials_api.py` — secret lifecycle: encrypted at rest, never
+  present in an API response, kept on a rename, rotated on update, and the file
+  removed when the row is deleted.
+- `tests/test_projects_api_paths.py` — path containment across read/write/delete/
+  move/mkdir, file lifecycle, history and restore, and import-path validation.
+
+### Notes
+Coverage: `scheduler.py` 41% → 98%, `api/credentials.py` 35% → 63%,
+`api/projects.py` 34% → 41%, total 71% → 74%. Suite is 527 tests, up from 446.
+
+`~/…` is not a traversal in this codebase — pathlib doesn't expand `~` when
+joining and `_resolve_safe` deliberately never calls `expanduser()`, so it becomes
+a literal directory inside the project. Pinned by a test so nobody "fixes" it.
+
 ## [0.3.0] — 2026-08-01
 
 Measurement for the AI layer, and provider calls that survive a rate limit.
