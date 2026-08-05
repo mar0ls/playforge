@@ -31,9 +31,28 @@ only `/bin`, `/etc`, `/usr`, `/opt` (read-only) and the project's own directory
 are visible, so a run can't read `/data` — no `master.key`, no `app.db`, no other
 project's repository.
 
-It's off by default because it depends on the host allowing unprivileged user
-namespaces, and a run that refuses to start is worse than one that isn't
-sandboxed. Turn it on and confirm a run still works before relying on it.
+**The container needs two flags for this to work at all:**
+
+```yaml
+security_opt:
+  - seccomp=unconfined
+  - systempaths=unconfined
+```
+
+Docker's default seccomp profile blocks the user-namespace clone the sandbox
+needs, and its masked `/proc` paths block the mount it always performs. Measured
+on Docker 29.4.0: neither running as root nor adding `CAP_SYS_ADMIN` helps, and
+`--privileged` works but defeats the point. Both flags are required; nothing else
+is.
+
+It fails closed: with the setting on and the flags missing, runs fail rather than
+quietly running unsandboxed.
+
+Off by default because those flags are a real trade, not a free win. They thin
+the barrier between the app container and the host kernel (no syscall filter,
+unmasked `/proc`) in order to put a barrier between a *run* and your data. Which
+matters more depends on whether you're more worried about a bad playbook reading
+your credential vault, or about a container escape. Decide deliberately.
 
 `docker`/`podman` are also accepted, giving a container per run — but they need
 the engine's socket inside the app container, which is root-equivalent access to

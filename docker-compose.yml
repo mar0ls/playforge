@@ -44,6 +44,15 @@ services:
       # Any model you've pulled in Ollama (e.g. deepseek-coder-v2, llama3.1).
       OLLAMA_MODEL: ${OLLAMA_MODEL:-}
       # SSH_AUTH_SOCK: /ssh-agent
+    # Required by run isolation (ANSIBLE_GUI_RUN_ISOLATION=1) and by nothing else.
+    # Docker's default seccomp profile blocks the user-namespace clone the sandbox
+    # needs, and its masked /proc paths block the mount it performs — verified on
+    # Docker 29.4.0; adding capabilities doesn't help and --privileged defeats the
+    # point. Uncomment both together with the setting. They thin this container's
+    # own confinement, so leave them off unless you want run isolation.
+    # security_opt:
+    #   - seccomp=unconfined
+    #   - systempaths=unconfined
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8765/health"]

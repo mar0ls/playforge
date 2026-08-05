@@ -3,6 +3,61 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.6.1] — 2026-08-05
+
+Run isolation verified on a real host. 0.6.0 shipped it unverified — the Docker
+daemon was down — so this replaces the guesses with measurements.
+
+### It works, but the container needs two flags
+
+Isolation is inert unless the app container runs with:
+
+```yaml
+security_opt:
+  - seccomp=unconfined
+  - systempaths=unconfined
+```
+
+Measured on Docker 29.4.0 (arm64, Docker Desktop), running as uid 1000:
+
+| container settings | result |
+|---|---|
+| defaults | `bwrap: No permissions to create new namespace` |
+| as root, default seccomp | same — it's the seccomp profile, not the uid |
+| `seccomp=unconfined` | gets further, then `Can't mount proc: Operation not permitted` |
+| `seccomp=unconfined` + `CAP_SYS_ADMIN` | still can't mount proc |
+| `seccomp=unconfined` + `systempaths=unconfined` | **works** |
+| `--privileged` | works, but defeats the purpose |
+
+The default seccomp profile blocks the user-namespace clone, and Docker's masked
+`/proc` paths block the mount ansible-runner's sandbox always performs. Both
+`--security-opt` flags are needed; extra capabilities are not, and `--privileged`
+is not.
+
+### Verified end to end
+
+Same playbook, same data volume, same image — only the isolation setting differs:
+
+- **off** → run fails with `DATA VISIBLE - run can read /data/app.db`
+- **on** → run passes, `/data/app.db` is not reachable
+
+**Fails closed.** With isolation on and the flags missing, the run fails (rc 1, no
+hosts touched) instead of quietly running unsandboxed.
+
+### Changed
+- `docker-compose.yml` carries the two `security_opt` lines, commented, next to
+  the setting that needs them.
+- `SECURITY.md` and `.env.example` state the flag requirement and the measured
+  trade-off rather than describing isolation as if enabling the setting were
+  enough.
+
+### Notes
+The flags weaken the app container's own confinement (no syscall filter,
+unmasked `/proc`) to sandbox the runs inside it. Those are different threat
+models and it's a real trade, not a free win: it protects your credential vault
+and other projects from a bad playbook, at the cost of a thinner barrier between
+the container and the host kernel. Left off by default for that reason.
+
 ## [0.6.0] — 2026-08-05
 
 Run isolation, off by default. First half of the multi-user work: roles mean
@@ -31,12 +86,9 @@ run, but they need the engine's socket inside the app container — root-equival
 access to the host. That buys isolation and loses more elsewhere, so `bwrap` is
 the default when isolation is on.
 
-**Not yet verified at runtime:** the Docker daemon was unavailable while this was
-written, so the image build with `bubblewrap` and the sandbox actually starting a
-run are unconfirmed. The tests cover the settings gate and the exact kwargs
-handed to ansible-runner — deliberately stopping at that boundary, since whether
-bwrap works on a given kernel isn't something a unit test can assert. Confirm on
-a real host before enabling.
+The unit tests cover the settings gate and the exact kwargs handed to
+ansible-runner, stopping at that boundary — whether bwrap works on a given kernel
+isn't something a unit test can assert. See 0.6.1 for the measured behaviour.
 
 ## [0.5.0] — 2026-08-05
 
