@@ -3,6 +3,46 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.7.0] — 2026-08-05
+
+User accounts and roles — the schema and store half. Nothing enforces roles yet;
+that lands next, on top of this.
+
+### Added
+- **`users` table** — username (case-insensitive, unique), password hash, role,
+  disabled flag, timestamps. Existing installs are untouched: with no accounts
+  the app stays in single-password (or no-auth) mode exactly as before.
+- **`runs.user_id`** — who started a run. Null for runs from before this, for
+  scheduled runs, and while in single-password mode; the audit trail only means
+  something once accounts exist. Closes the "Audyt" item from the TODO.
+- **Password hashing with `hashlib.scrypt`** — stdlib, so no new dependency and
+  no lockfile churn, and memory-hard rather than a bare hash. The cost parameters
+  are stored inside each hash, so they can be raised later without invalidating
+  anyone's password; `needs_rehash` flags stale ones and `authenticate` upgrades
+  them transparently on the next successful login.
+- **Roles: admin / operator / viewer**, expressed as capabilities (`read`, `run`,
+  `write`, `secrets`, `admin`) so a route can ask for a capability instead of
+  hardcoding a role list.
+- **Last-admin protection** — the last active admin can't be demoted, disabled or
+  deleted. An install with no admin can't be administered back to working.
+
+### Notes
+scrypt parameters were measured, not guessed. On the reference host (Docker
+29.4.0, arm64): 2^14 = 34ms/16MB, 2^16 = 105ms/64MB, 2^17 = 209ms/128MB. N = 2^16
+is the choice: OWASP's headline figure is 2^17, but 128MB per login attempt is
+felt on the small self-hosted boxes this app runs on. Also worth knowing —
+OpenSSL's default `maxmem` rejects any N above 2^14 outright, so it's passed
+explicitly; without it `scrypt(n=2**16, …)` just raises "memory limit exceeded".
+
+`authenticate` runs the KDF even when the account doesn't exist, so a wrong
+username and a wrong password cost the same. Otherwise response time enumerates
+accounts.
+
+**Upgrade verified on a real database**, not just in unit tests: a v1 database
+written by the 0.6.1 container, holding 7 runs and a project, came up as schema
+v2 with the `users` table created, `user_id` added, every row intact, and a
+second start applying nothing.
+
 ## [0.6.1] — 2026-08-05
 
 Run isolation verified on a real host. 0.6.0 shipped it unverified — the Docker

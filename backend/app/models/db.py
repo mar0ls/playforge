@@ -25,6 +25,28 @@ class Project(Base):
     templates: Mapped[list["RunTemplate"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
+class User(Base):
+    """A named account with a role.
+
+    Nothing enforces roles yet — this is the schema half of multi-user. Auth still
+    falls back to the single shared password when the table is empty, so existing
+    installs keep working.
+
+    `password_hash` carries its own KDF parameters (see core/users.py); it is never
+    exposed by the API.
+    """
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(16), default="viewer")  # admin | operator | viewer
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Credential(Base):
     """A reusable secret (SSH key, vault password, become password, WireGuard config).
 
@@ -138,6 +160,10 @@ class Run(Base):
     stats_json: Mapped[str] = mapped_column(Text, default="")
     failures_json: Mapped[str] = mapped_column(Text, default="")
     artifacts_json: Mapped[str] = mapped_column(Text, default="")  # files the run wrote into the repo
+    # Who started it. Null for runs from before multi-user, for scheduled runs,
+    # and while the app is in single-password mode — the audit trail only starts
+    # meaning something once accounts exist.
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     project: Mapped[Project] = relationship(back_populates="runs")
 

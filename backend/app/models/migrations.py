@@ -74,11 +74,22 @@ def _m001_run_and_schedule_columns(conn) -> None:
     add_column(conn, "schedules", "timezone", "VARCHAR(64) DEFAULT ''")
 
 
+def _m002_run_user_id(conn) -> None:
+    """`runs.user_id` — who started a run, for the audit trail.
+
+    The `users` table itself needs no step here: it's a model, so `create_all`
+    builds it before migrations run. Only columns added to tables that already
+    exist need a migration.
+    """
+    add_column(conn, "runs", "user_id", "INTEGER")
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "run_and_schedule_columns", _m001_run_and_schedule_columns),
+    (2, "run_user_id", _m002_run_user_id),
 ]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # --- version bookkeeping -----------------------------------------------------
