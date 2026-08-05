@@ -3,6 +3,36 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.5.0] — 2026-08-05
+
+Closing the two open holes in the HTTP surface, and writing down the access model.
+
+### Added
+- **Failed-login throttling** — `POST /login` had no limit, which made the single
+  shared password a guessing oracle for anyone who could reach the port. 5 failed
+  attempts per client address now trigger a lockout that doubles from 30s to a
+  15min cap, and it fails closed: the correct password is refused while locked.
+  Counted on `request.client.host`, not `X-Forwarded-For` — uvicorn runs without
+  `--proxy-headers`, so the header would be attacker-controlled. Behind a reverse
+  proxy the lockout becomes global rather than per-client, which fails closed too.
+- **Security headers on every response** — CSP, `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+- **`SECURITY.md`** — how to report a vulnerability, and the access model stated
+  plainly: single-tenant, UI access equals shell access on the controller.
+
+### Notes
+`script-src` keeps `'unsafe-inline'` and `'unsafe-eval'`. All ten page templates
+carry an inline `<script>` block and the vendored htmx builds handlers with
+`Function()`/`eval()` (verified, not assumed), so dropping them blanks the UI. The
+enforceable value is elsewhere: `connect-src 'self'` leaves injected script
+nowhere to exfiltrate to, `frame-ancestors 'none'` stops clickjacking, and
+`script-src 'self'` still bars code from another origin — which is worth having
+now that no asset comes from a CDN.
+
+Verified over real HTTP against a running app: headers present, lockout trips on
+exactly the 5th attempt, correct password refused while locked, all seven
+authenticated pages still render.
+
 ## [0.4.0] — 2026-08-01
 
 Tests for the HTTP and scheduler edges. Two bugs found doing it.

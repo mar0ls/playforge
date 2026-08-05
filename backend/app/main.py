@@ -57,6 +57,45 @@ app = FastAPI(title="Playforge", version=__version__, lifespan=lifespan)
 _PUBLIC_PREFIXES = ("/login", "/static", "/health")
 
 
+# script-src is permissive on purpose. Every page template carries an inline
+# <script> block, and the vendored htmx builds handlers with Function()/eval(),
+# so 'unsafe-inline'/'unsafe-eval' are load-bearing — dropping them blanks the UI.
+# The value here is in the directives that cost nothing to enforce:
+#   connect-src 'self'  an injected script can't exfiltrate to another host
+#   frame-ancestors     clickjacking
+#   object-src/base-uri/form-action  plugin and base-tag injection, form hijack
+# script-src 'self' still blocks loading code from another origin, which is worth
+# having now that no asset comes from a CDN.
+_CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+])
+
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",          # for anything predating frame-ancestors
+    "Referrer-Policy": "no-referrer",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Set security headers on every response, without overriding an explicit one."""
+    response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     """Gate every request behind a session cookie when ANSIBLE_GUI_PASSWORD is set.
@@ -139,12 +178,36 @@ async def login_page(request: Request, error: str = ""):
     return templates.TemplateResponse(request, "login.html", {"error": error})
 
 
+def _client_ip(request: Request) -> str:
+    """Peer address for throttling. Not X-Forwarded-For: uvicorn runs without
+    --proxy-headers, so a client could set that header itself and dodge lockout."""
+    return request.client.host if request.client else "unknown"
+
+
 @app.post("/login")
 async def login_submit(request: Request, password: str = Form("")):
     if not auth.auth_enabled():
         return RedirectResponse(url="/", status_code=303)
+
+    client = _client_ip(request)
+    remaining = auth.lockout_remaining(client)
+    if remaining > 0:
+        # 429 + Retry-After rather than 401: the password wasn't even checked.
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"error": f"Too many failed attempts. Try again in {int(remaining) + 1}s."},
+            status_code=429, headers={"Retry-After": str(int(remaining) + 1)})
+
     if auth.check_password(password):
+        auth.record_success(client)
         return _set_session(RedirectResponse(url="/", status_code=303), request)
+
+    penalty = auth.record_failure(client)
+    if penalty > 0:
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"error": f"Too many failed attempts. Try again in {int(penalty)}s."},
+            status_code=429, headers={"Retry-After": str(int(penalty))})
     return templates.TemplateResponse(request, "login.html",
                                       {"error": "Wrong password."}, status_code=401)
 

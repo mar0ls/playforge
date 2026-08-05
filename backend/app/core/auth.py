@@ -76,3 +76,87 @@ def verify_token(token: str | None, now: float | None = None) -> bool:
         return False
     expected = hmac.new(_signing_key(), exp_str.encode(), hashlib.sha256).digest()
     return hmac.compare_digest(sig, expected)
+
+
+# --- failed-login throttling -------------------------------------------------
+#
+# The password is a single shared secret with no user to lock out, so an
+# unthrottled /login is an open guessing oracle for anyone who can reach the
+# port. Failures are counted per client IP; after _MAX_FAILS within _FAIL_WINDOW
+# the address is locked out, and each further lockout doubles up to _MAX_LOCKOUT.
+#
+# State is in-process on purpose: the app is a single uvicorn process by design
+# (see the scheduler's "no separate worker" note). If it ever runs multiple
+# workers this becomes per-worker and the effective limit multiplies.
+#
+# `request.client.host` is the real peer — uvicorn runs without --proxy-headers,
+# so X-Forwarded-For is not trusted and can't be spoofed to dodge a lockout.
+# Behind a reverse proxy every request appears to come from the proxy, which
+# makes the lockout global rather than per-client; that fails closed, not open.
+
+_MAX_FAILS = 5
+_FAIL_WINDOW = 300.0        # failures older than this stop counting
+_BASE_LOCKOUT = 30.0
+_MAX_LOCKOUT = 900.0
+_MAX_TRACKED = 4096         # bound memory against spoofed/rotating sources
+
+
+class _Attempts:
+    __slots__ = ("fails", "first_fail", "locked_until", "lockouts")
+
+    def __init__(self) -> None:
+        self.fails = 0
+        self.first_fail = 0.0
+        self.locked_until = 0.0
+        self.lockouts = 0
+
+
+_attempts: dict[str, _Attempts] = {}
+
+
+def _prune(now: float) -> None:
+    """Drop entries that are neither locked nor inside the failure window."""
+    for key in [k for k, a in _attempts.items()
+                if a.locked_until < now and (now - a.first_fail) > _FAIL_WINDOW]:
+        _attempts.pop(key, None)
+
+
+def lockout_remaining(client: str, now: float | None = None) -> float:
+    """Seconds left on this client's lockout, or 0 when it may attempt a login."""
+    now = now or time.time()
+    a = _attempts.get(client)
+    if a is None:
+        return 0.0
+    return max(0.0, a.locked_until - now)
+
+
+def record_failure(client: str, now: float | None = None) -> float:
+    """Count a failed attempt. Returns the lockout in seconds (0 = not locked)."""
+    now = now or time.time()
+    if len(_attempts) >= _MAX_TRACKED:
+        _prune(now)
+    a = _attempts.get(client)
+    if a is None:
+        a = _attempts[client] = _Attempts()
+    # A first failure, or one after the window lapsed, starts a fresh streak.
+    if a.fails == 0 or (now - a.first_fail) > _FAIL_WINDOW:
+        a.fails = 0
+        a.first_fail = now
+    a.fails += 1
+    if a.fails >= _MAX_FAILS:
+        a.lockouts += 1
+        penalty = min(_BASE_LOCKOUT * (2 ** (a.lockouts - 1)), _MAX_LOCKOUT)
+        a.locked_until = now + penalty
+        a.fails = 0            # streak consumed; the lockout is the punishment
+        return penalty
+    return 0.0
+
+
+def record_success(client: str) -> None:
+    """Clear a client's failure history after a correct password."""
+    _attempts.pop(client, None)
+
+
+def reset_throttle() -> None:
+    """Drop all throttling state. For tests."""
+    _attempts.clear()
