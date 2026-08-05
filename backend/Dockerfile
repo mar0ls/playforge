@@ -18,6 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         rsync \
         gosu \
+        # Sandbox for run isolation (run.isolation). Present but unused unless the
+        # setting is on; whether it works depends on the host allowing
+        # unprivileged user namespaces, which is why the setting defaults to off.
+        bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # Run as a non-root user. uid 1000 matches the host owner of the bind-mounted

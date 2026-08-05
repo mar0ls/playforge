@@ -53,7 +53,7 @@ def normalize_escapes(content: str) -> tuple[str, bool]:
     return out, True
 
 
-def build_tools(project_id: str, *, get_run=None) -> dict[str, Tool]:
+def build_tools(project_id: str, *, get_run=None, isolation: dict | None = None) -> dict[str, Tool]:
     """Build the tool registry for `project_id`. `get_run(run_id)->dict` is injected
     by the API layer (it needs the DB) so this module stays sync + importable."""
     root = storage.paths_for(project_id).root
@@ -127,7 +127,7 @@ def build_tools(project_id: str, *, get_run=None) -> dict[str, Tool]:
     def _run(playbook: str, inventory: str, check: bool) -> dict:
         from app.core.runner import RunRequest, run_playbook_sync
         req = RunRequest(project_id=project_id, playbook=playbook, inventory=inventory or "", check=check)
-        res = run_playbook_sync(req)
+        res = run_playbook_sync(req, isolation=isolation)
         # Trim failures to what the agent needs to reason about a fix.
         fails = [{"host": f.get("host"), "task": f.get("task"),
                   "msg": (f.get("result", {}) or {}).get("msg") or f.get("error") or f.get("stderr", "")}

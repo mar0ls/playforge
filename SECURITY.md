@@ -20,8 +20,25 @@ shell access on the machine running the container, because that is what it is:
 
 Deploy it on a trusted network, behind TLS, not on the public internet.
 
-Run isolation (a container per run) and real multi-user with roles are planned;
-until they ship, the sentence above is the whole access model.
+Real multi-user with roles is planned, on top of run isolation — roles mean
+little while every run can do anything on the controller.
+
+### Run isolation (optional, off by default)
+
+Setting `run.isolation` (or `ANSIBLE_GUI_RUN_ISOLATION=1`) runs playbooks in a
+sandbox instead of directly on the app host. With the default `bwrap` mechanism
+only `/bin`, `/etc`, `/usr`, `/opt` (read-only) and the project's own directory
+are visible, so a run can't read `/data` — no `master.key`, no `app.db`, no other
+project's repository.
+
+It's off by default because it depends on the host allowing unprivileged user
+namespaces, and a run that refuses to start is worse than one that isn't
+sandboxed. Turn it on and confirm a run still works before relying on it.
+
+`docker`/`podman` are also accepted, giving a container per run — but they need
+the engine's socket inside the app container, which is root-equivalent access to
+the host. That buys run isolation and loses considerably more elsewhere. Prefer
+`bwrap`.
 
 ## What is enforced
 

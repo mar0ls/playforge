@@ -50,6 +50,26 @@ SPECS: dict[str, SettingSpec] = {
     # Off by default (air-gap friendly): when a module isn't installed locally,
     # look up its parameters on docs.ansible.com. Only enable if the box has internet.
     "ai.web_docs": SettingSpec(env_var="ANSIBLE_GUI_WEB_DOCS", default="0"),  # "1"/"0"
+
+    # --- run isolation ---
+    # Off by default: it depends on the host kernel allowing what the chosen
+    # mechanism needs, and a run that can't start is worse than one that isn't
+    # sandboxed. Turn it on deliberately, after checking it works on your box.
+    #
+    # Without it a playbook runs as the app user with the whole filesystem in
+    # reach — including /data (master.key, app.db, every other project's repo).
+    "run.isolation": SettingSpec(env_var="ANSIBLE_GUI_RUN_ISOLATION", default="0"),  # "1"/"0"
+    # Which mechanism ansible-runner uses. Anything that isn't docker/podman is
+    # treated by ansible-runner as a bubblewrap-style sandbox binary.
+    #   bwrap           in-process sandbox, no container engine, no socket needed
+    #   docker/podman   a container per run — needs the engine's socket inside
+    #                   this container, which is root-equivalent access to the
+    #                   host. Strictly worse for host security; think first.
+    "run.isolation_executable": SettingSpec(
+        env_var="ANSIBLE_GUI_RUN_ISOLATION_EXECUTABLE", default="bwrap"),
+    # Only used by the docker/podman path; ignored by bwrap.
+    "run.isolation_image": SettingSpec(
+        env_var="ANSIBLE_GUI_RUN_ISOLATION_IMAGE", default=""),
 }
 
 

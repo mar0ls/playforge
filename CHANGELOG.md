@@ -3,6 +3,41 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.6.0] — 2026-08-05
+
+Run isolation, off by default. First half of the multi-user work: roles mean
+little while every run can do anything on the controller.
+
+### Added
+- **Optional run isolation** (`run.isolation`, `ANSIBLE_GUI_RUN_ISOLATION`).
+  Until now nothing was passed to ansible-runner to constrain a run, so a
+  playbook — including one the AI generated — executed as the app user with the
+  whole filesystem in reach: `/data/master.key`, `app.db`, every other project's
+  repo. Enabled, runs go through ansible-runner's sandbox, which binds only
+  `/bin` `/etc` `/usr` `/opt` read-only plus the project's own directory, so
+  `/data` is invisible by simply not being bound.
+- Wired into all three run paths: the streamed run, ad-hoc commands, and the
+  agent's preview/run tools. The agent path resolves the setting in the async
+  route, because its tool callbacks are sync and run on a worker thread.
+- `bubblewrap` added to the image.
+
+### Notes
+Off by default deliberately. The sandbox needs the host to allow unprivileged
+user namespaces; a run that won't start is worse than one that isn't sandboxed.
+Turn it on and confirm a run still works before relying on it.
+
+`docker`/`podman` are accepted as alternative mechanisms, giving a container per
+run, but they need the engine's socket inside the app container — root-equivalent
+access to the host. That buys isolation and loses more elsewhere, so `bwrap` is
+the default when isolation is on.
+
+**Not yet verified at runtime:** the Docker daemon was unavailable while this was
+written, so the image build with `bubblewrap` and the sandbox actually starting a
+run are unconfirmed. The tests cover the settings gate and the exact kwargs
+handed to ansible-runner — deliberately stopping at that boundary, since whether
+bwrap works on a given kernel isn't something a unit test can assert. Confirm on
+a real host before enabling.
+
 ## [0.5.0] — 2026-08-05
 
 Closing the two open holes in the HTTP surface, and writing down the access model.

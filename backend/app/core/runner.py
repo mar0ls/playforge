@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import ansible_runner
 
@@ -135,7 +135,55 @@ def _cleanup_private_dir(private_data_dir: Path) -> None:
         pass
 
 
-def _runner_kwargs(req: RunRequest, private_data_dir: Path) -> dict:
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+async def isolation_kwargs(project_root: Path) -> dict:
+    """ansible-runner isolation settings, or `{}` when run isolation is off.
+
+    Without isolation a playbook runs as the app user with the whole filesystem
+    reachable — /data holds master.key, app.db and every other project's repo.
+
+    Two mechanisms, picked by `run.isolation_executable`:
+
+    * **bwrap** (default when enabled) — ansible-runner's sandbox. It binds only
+      /bin /etc /usr /opt read-only plus whatever we list, so /data is invisible
+      simply by not being bound. The project root therefore has to be shown
+      explicitly or the run can't read its own playbook.
+    * **docker / podman** — a container per run. Needs the engine's socket inside
+      this container, which is root-equivalent access to the host: it buys run
+      isolation at the cost of a much worse blast radius if the app is
+      compromised. Supported, not recommended as the default.
+
+    Off unless switched on: whether the sandbox works depends on the host kernel
+    allowing unprivileged user namespaces, and a run that won't start is worse
+    than one that isn't sandboxed.
+    """
+    from app.core import settings_store
+
+    enabled = (await settings_store.get("run.isolation") or "0").strip().lower()
+    if enabled not in _TRUTHY:
+        return {}
+
+    executable = (await settings_store.get("run.isolation_executable") or "bwrap").strip()
+    kwargs: dict[str, Any] = {
+        "process_isolation": True,
+        "process_isolation_executable": executable,
+    }
+
+    if executable in ("docker", "podman"):
+        image = (await settings_store.get("run.isolation_image") or "").strip()
+        if image:
+            kwargs["container_image"] = image
+        kwargs["container_volume_mounts"] = [f"{project_root}:{project_root}:rw"]
+    else:
+        kwargs["process_isolation_show_paths"] = [str(project_root)]
+
+    return kwargs
+
+
+def _runner_kwargs(req: RunRequest, private_data_dir: Path,
+                   isolation: dict | None = None) -> dict:
     pp = storage.paths_for(req.project_id)
     inventory_path = (pp.root / req.inventory) if req.inventory else _default_inventory(pp.root)
     playbook_path = pp.root / req.playbook
@@ -210,6 +258,8 @@ def _runner_kwargs(req: RunRequest, private_data_dir: Path) -> dict:
     # and uses it via ssh-agent automatically. Empty / None means "no key injected".
     if req.ssh_key_content:
         kwargs["ssh_key"] = req.ssh_key_content
+    if isolation:
+        kwargs.update(isolation)
     return kwargs
 
 
@@ -284,8 +334,12 @@ async def run_playbook(
         # is safe to call from any thread.
         return cancel_event is not None and cancel_event.is_set()
 
+    # Resolved here, not in _run_blocking: the settings read is async and that
+    # function runs in an executor thread.
+    isolation = await isolation_kwargs(storage.paths_for(req.project_id).root)
+
     def _run_blocking():
-        kwargs = _runner_kwargs(req, private_data_dir)
+        kwargs = _runner_kwargs(req, private_data_dir, isolation=isolation)
         return ansible_runner.run(event_handler=_event_handler, cancel_callback=_should_cancel, **kwargs)
 
     try:
@@ -308,8 +362,12 @@ async def run_playbook(
     return result
 
 
-def run_playbook_sync(req: RunRequest) -> RunResult:
-    """Sync runner for the agent's tool callbacks (no stream, no cancel)."""
+def run_playbook_sync(req: RunRequest, isolation: dict | None = None) -> RunResult:
+    """Sync runner for the agent's tool callbacks (no stream, no cancel).
+
+    `isolation` is resolved by the async caller (see `isolation_kwargs`) because
+    reading it hits the DB, and this function is called from a worker thread.
+    """
     private_data_dir = Path(tempfile.mkdtemp(prefix="ansible-agentrun-"))
     collector = _EventCollector()
 
@@ -318,7 +376,7 @@ def run_playbook_sync(req: RunRequest) -> RunResult:
         return True
 
     try:
-        kwargs = _runner_kwargs(req, private_data_dir)
+        kwargs = _runner_kwargs(req, private_data_dir, isolation=isolation)
         runner = ansible_runner.run(event_handler=_event_handler, **kwargs)
     except Exception as exc:
         _cleanup_private_dir(private_data_dir)
@@ -363,6 +421,8 @@ async def run_adhoc(project_id: str, host_pattern: str, module: str, args: str =
             loop.call_soon_threadsafe(on_event, event)
         return True
 
+    isolation = await isolation_kwargs(pp.root)
+
     def _run_blocking():
         adhoc_kwargs: dict = dict(
             private_data_dir=str(private_data_dir),
@@ -390,6 +450,9 @@ async def run_adhoc(project_id: str, host_pattern: str, module: str, args: str =
 
         if ssh_key_content:
             adhoc_kwargs["ssh_key"] = ssh_key_content
+
+        if isolation:
+            adhoc_kwargs.update(isolation)
 
         return ansible_runner.run(**adhoc_kwargs)
 
