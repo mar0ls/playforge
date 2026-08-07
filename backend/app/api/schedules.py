@@ -93,6 +93,13 @@ async def update_schedule(schedule_id: int, payload: ScheduleIn):
         s = await session.get(Schedule, schedule_id)
         if s is None:
             raise HTTPException(404, "schedule not found")
+        # Same existence checks as create. Without them a working schedule could be
+        # repointed at a project or template that isn't there, and the only symptom
+        # would be it quietly not running at 2am.
+        if not await session.get(Project, payload.project_id):
+            raise HTTPException(404, "project not found")
+        if not await session.get(RunTemplate, payload.template_id):
+            raise HTTPException(404, "template not found")
         s.name = payload.name
         s.project_id = payload.project_id
         s.template_id = payload.template_id
