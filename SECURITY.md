@@ -8,9 +8,23 @@ Please don't open a public issue for anything exploitable.
 
 ## What Playforge is today
 
-**Single-tenant.** One shared password, one operator. There are no user accounts,
-no roles, and no per-user audit trail. Treat access to the UI as equivalent to
-shell access on the machine running the container, because that is what it is:
+**Accounts and roles, or a single shared password.** Which one is in effect
+depends on whether any accounts exist:
+
+| Accounts | `ANSIBLE_GUI_PASSWORD` | Behaviour |
+|---|---|---|
+| yes | — | Sign in with a username; the role decides what you may call |
+| no | set | One shared password, full access, as before |
+| no | unset | No authentication at all |
+
+Roles are `admin`, `operator` and `viewer`. Every API route maps to a required
+capability, an unmapped route denies everyone, and a test enumerates the real
+route table so a new endpoint can't ship without that decision.
+
+Even so, treat `operator` and above as equivalent to shell access on the machine
+running the container, because that is what it is: a run executes on the app host
+with the credentials from the vault. Run isolation (below) is what narrows this,
+and it is off by default.
 
 - Runs execute on the app host, as the app user, with the credentials from the
   vault. Anyone who can log in can run an arbitrary playbook against any host the
@@ -19,9 +33,6 @@ shell access on the machine running the container, because that is what it is:
   enabled. It's bounded by the same trust boundary, not a smaller one.
 
 Deploy it on a trusted network, behind TLS, not on the public internet.
-
-Real multi-user with roles is planned, on top of run isolation — roles mean
-little while every run can do anything on the controller.
 
 ### Run isolation (optional, off by default)
 
@@ -65,10 +76,14 @@ Verified behaviour, not aspiration:
 
 | Area | Behaviour |
 |---|---|
-| Auth | Optional. `ANSIBLE_GUI_PASSWORD` unset = **no login at all**. Set = every request needs a valid session. |
+| Auth | Accounts when any exist, else the shared password, else open. See the table above. |
+| First admin | From `ANSIBLE_GUI_ADMIN_USER`/`_PASSWORD` (or their `_FILE` form) at startup, or via `/setup` guarded by a one-time token printed to the container log. The token closes the window where anyone reaching the published port could claim the instance before the operator does. |
+| Roles | Per-route capability check, fail-closed on unmapped routes. Enforced on the WebSocket too, which HTTP middleware doesn't cover. |
+| Revocation | The account is re-read on every request, so disabling or deleting one ends its sessions immediately rather than at token expiry. |
+| Passwords | scrypt (N=2^16, r=8, p=1) with per-password salt; cost parameters stored in the hash and upgraded on next sign-in. A missing account costs the same time as a wrong password, so timing can't enumerate usernames. |
 | Session | HMAC-signed expiring token, `HttpOnly`, `SameSite=Lax`, `Secure` when served over HTTPS. Signing key derives from the password *and* the credential master key, so a leaked cookie can't be forged with either alone. |
 | Login throttling | 5 failed attempts per client address triggers a lockout, doubling from 30s to a 15min cap. Fails closed: the correct password is refused while locked. |
-| WebSockets | The run WebSocket re-checks the session itself — HTTP middleware doesn't cover the WS scope, so without this a LAN attacker could open a socket and run playbooks. |
+| WebSockets | The run WebSocket re-checks both the session and the role itself — HTTP middleware doesn't cover the WS scope, so without this a LAN attacker could open a socket and run playbooks, and a viewer could bypass the capability check on `POST /api/runs` by using the socket instead. |
 | Credentials | Encrypted at rest with Fernet. The key lives at `/data/master.key` (0600) or comes from `ANSIBLE_GUI_MASTER_KEY`. Secrets are never returned by the API. |
 | Run secrets | Vault/become passwords and SSH keys are written to 0600 files in a per-run temp dir, which is deleted after the run. |
 | Project files | Every path is resolved and confined to the project directory; `..` and absolute paths are refused. |

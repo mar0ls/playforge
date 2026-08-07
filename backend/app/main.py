@@ -21,6 +21,7 @@ from app.api import ai as ai_api
 from app.api import schedules as schedules_api
 from app.api import library as library_api
 from app.api import environments as environments_api
+from app.api import users as users_api
 from app.core.scheduler import get_scheduler, load_all as load_schedules
 from app.core.config import settings
 from app.core import doc_index
@@ -37,6 +38,8 @@ templates.env.globals["app_version"] = __version__
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    from app.core import bootstrap
+    await bootstrap.prepare()
     scheduler = get_scheduler()
     scheduler.start()
     await load_schedules()
@@ -54,7 +57,7 @@ app = FastAPI(title="Playforge", version=__version__, lifespan=lifespan)
 
 
 # Paths reachable without a session (login itself, static assets, health probe).
-_PUBLIC_PREFIXES = ("/login", "/static", "/health")
+_PUBLIC_PREFIXES = ("/login", "/setup", "/static", "/health")
 
 
 # script-src is permissive on purpose. Every page template carries an inline
@@ -96,21 +99,63 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+def _deny(path: str, status: int, detail: str):
+    """APIs get JSON, pages get sent to the login screen."""
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": detail}, status_code=status)
+    if status == 401:
+        return RedirectResponse(url="/login", status_code=303)
+    return JSONResponse({"detail": detail}, status_code=status)
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
-    """Gate every request behind a session cookie when ANSIBLE_GUI_PASSWORD is set.
-    No-op when auth is disabled (no password) — keeps existing installs working."""
-    if not auth.auth_enabled():
-        return await call_next(request)
+    """Authenticate, then authorise.
+
+    Three modes, resolved per request so creating the first account switches the
+    app over without a restart:
+
+    * **accounts exist** — the cookie names a user; the role decides what they may
+      call (see core/authz).
+    * **no accounts, ANSIBLE_GUI_PASSWORD set** — the pre-existing shared-password
+      behaviour, unchanged. There is no user to attribute or restrict, so the
+      session is treated as full access.
+    * **neither** — no auth at all, as before.
+
+    The user is re-read from the database on every request rather than trusted
+    from the cookie, so disabling or deleting an account ends its sessions
+    immediately instead of at token expiry.
+    """
     path = request.url.path
     if any(path == p or path.startswith(p + "/") or path.startswith(p) for p in _PUBLIC_PREFIXES):
         return await call_next(request)
-    if auth.verify_token(request.cookies.get(auth.SESSION_COOKIE)):
+
+    from app.core import authz, users as users_core
+
+    multi_user = await users_core.multi_user_enabled()
+
+    if not multi_user:
+        if not auth.auth_enabled():
+            request.state.user = None
+            return await call_next(request)
+        if not auth.verify_token(request.cookies.get(auth.SESSION_COOKIE)):
+            return _deny(path, 401, "authentication required")
+        request.state.user = None
         return await call_next(request)
-    # Unauthenticated: APIs get 401 JSON, pages get redirected to /login.
-    if path.startswith("/api/"):
-        return JSONResponse({"detail": "authentication required"}, status_code=401)
-    return RedirectResponse(url="/login", status_code=303)
+
+    session = auth.read_token(request.cookies.get(auth.SESSION_COOKIE))
+    if session is None or session.user_id is None:
+        return _deny(path, 401, "authentication required")
+
+    user = await users_core.get(session.user_id)
+    if user is None or user.disabled:
+        return _deny(path, 401, "authentication required")
+
+    request.state.user = user
+    if path.startswith("/api/") and not authz.allowed(user.role, request.method, path):
+        return JSONResponse(
+            {"detail": f"role '{user.role}' is not allowed to do this"}, status_code=403)
+    return await call_next(request)
 
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -135,6 +180,7 @@ app.include_router(ai_api.router)
 app.include_router(schedules_api.router)
 app.include_router(library_api.router)
 app.include_router(environments_api.router)
+app.include_router(users_api.router)
 
 
 @app.get("/health")
@@ -164,18 +210,24 @@ async def health():
     return payload
 
 
-def _set_session(resp, request: Request):
+def _set_session(resp, request: Request, user_id: int | None = None):
     secure = request.url.scheme == "https"
-    resp.set_cookie(auth.SESSION_COOKIE, auth.issue_token(), max_age=7 * 24 * 3600,
+    resp.set_cookie(auth.SESSION_COOKIE, auth.issue_token(user_id), max_age=7 * 24 * 3600,
                     httponly=True, samesite="lax", secure=secure)
     return resp
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = ""):
-    if not auth.auth_enabled() or auth.verify_token(request.cookies.get(auth.SESSION_COOKIE)):
+    from app.core import users as users_core
+
+    multi_user = await users_core.multi_user_enabled()
+    if not multi_user and not auth.auth_enabled():
         return RedirectResponse(url="/", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"error": error})
+    if auth.verify_token(request.cookies.get(auth.SESSION_COOKIE)):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request, "login.html",
+                                      {"error": error, "multi_user": multi_user})
 
 
 def _client_ip(request: Request) -> str:
@@ -185,31 +237,99 @@ def _client_ip(request: Request) -> str:
 
 
 @app.post("/login")
-async def login_submit(request: Request, password: str = Form("")):
-    if not auth.auth_enabled():
+async def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
+    from app.core import users as users_core
+
+    multi_user = await users_core.multi_user_enabled()
+    if not multi_user and not auth.auth_enabled():
         return RedirectResponse(url="/", status_code=303)
 
+    # Throttling comes first in both modes: a locked-out client shouldn't get its
+    # password checked, and shouldn't learn whether a username exists either.
     client = _client_ip(request)
     remaining = auth.lockout_remaining(client)
     if remaining > 0:
-        # 429 + Retry-After rather than 401: the password wasn't even checked.
         return templates.TemplateResponse(
             request, "login.html",
-            {"error": f"Too many failed attempts. Try again in {int(remaining) + 1}s."},
+            {"error": f"Too many failed attempts. Try again in {int(remaining) + 1}s.",
+             "multi_user": multi_user},
             status_code=429, headers={"Retry-After": str(int(remaining) + 1)})
 
-    if auth.check_password(password):
+    if multi_user:
+        user = await users_core.authenticate(username, password)
+        ok, user_id = (user is not None), (user.id if user else None)
+        # Deliberately the same message for a bad username and a bad password.
+        error = "Wrong username or password."
+    else:
+        ok, user_id = auth.check_password(password), None
+        error = "Wrong password."
+
+    if ok:
         auth.record_success(client)
-        return _set_session(RedirectResponse(url="/", status_code=303), request)
+        return _set_session(RedirectResponse(url="/", status_code=303), request, user_id)
 
     penalty = auth.record_failure(client)
     if penalty > 0:
         return templates.TemplateResponse(
             request, "login.html",
-            {"error": f"Too many failed attempts. Try again in {int(penalty)}s."},
+            {"error": f"Too many failed attempts. Try again in {int(penalty)}s.",
+             "multi_user": multi_user},
             status_code=429, headers={"Retry-After": str(int(penalty))})
     return templates.TemplateResponse(request, "login.html",
-                                      {"error": "Wrong password."}, status_code=401)
+                                      {"error": error, "multi_user": multi_user},
+                                      status_code=401)
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request, error: str = ""):
+    from app.core import bootstrap
+
+    if bootstrap.setup_token() is None:
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request, "setup.html", {"error": error})
+
+
+@app.post("/setup")
+async def setup_submit(request: Request, token: str = Form(""), username: str = Form(""),
+                       password: str = Form("")):
+    """Create the first administrator.
+
+    Requires the token printed to the container log. Without it, publishing the
+    port would mean whoever reached it first could claim the instance — the
+    window between `docker compose up -d` and the operator opening a browser.
+    """
+    from app.core import bootstrap, users as users_core
+
+    if bootstrap.setup_token() is None:
+        return RedirectResponse(url="/", status_code=303)
+
+    # Throttled like /login: the token is the only thing standing here, so it
+    # must not be guessable at speed.
+    client = _client_ip(request)
+    remaining = auth.lockout_remaining(client)
+    if remaining > 0:
+        return templates.TemplateResponse(
+            request, "setup.html",
+            {"error": f"Too many attempts. Try again in {int(remaining) + 1}s."},
+            status_code=429, headers={"Retry-After": str(int(remaining) + 1)})
+
+    if not bootstrap.check_setup_token(token):
+        auth.record_failure(client)
+        return templates.TemplateResponse(
+            request, "setup.html",
+            {"error": "Wrong setup token. It is printed in the container log."},
+            status_code=403)
+
+    try:
+        user = await users_core.create(username, password, users_core.ADMIN)
+    except users_core.UserError as e:
+        return templates.TemplateResponse(request, "setup.html",
+                                          {"error": str(e)}, status_code=400)
+
+    auth.record_success(client)
+    bootstrap.clear_setup_token()
+    logger.warning("first administrator %r created via /setup", user.username)
+    return _set_session(RedirectResponse(url="/", status_code=303), request, user.id)
 
 
 @app.post("/logout")
@@ -258,6 +378,17 @@ async def assistant_page(request: Request):
 @app.get("/credentials", response_class=HTMLResponse)
 async def credentials_page(request: Request):
     return templates.TemplateResponse(request, "credentials.html", {"active_nav": "credentials"})
+
+
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request):
+    """Account management. The API behind it is admin-only; a non-admin reaching
+    this page sees an empty table rather than a 403 on the page itself."""
+    user = getattr(request.state, "user", None)
+    return templates.TemplateResponse(request, "users.html", {
+        "active_nav": "users",
+        "current_user_id": getattr(user, "id", None),
+    })
 
 
 @app.get("/settings", response_class=HTMLResponse)

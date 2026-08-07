@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Users — Playforge{% endblock %}
+{% block breadcrumb %}<span>Users</span>{% endblock %}
+{% block header_actions %}
+  <button class="btn" @click="$dispatch('open-user-form')">
+    <i class="icon" data-lucide="user-plus"></i> New user
+  </button>
+{% endblock %}
+{% block content %}
+<section x-data="usersPage()" x-init="load()" @open-user-form.window="showForm = true; resetForm()">
+
+  <div class="card" x-show="showForm" x-cloak>
+    <div class="card-header">
+      <h3>New user</h3>
+      <button class="btn-ghost" @click="showForm = false"><i class="icon" data-lucide="x"></i></button>
+    </div>
+    <form @submit.prevent="create()">
+      <div class="form-row">
+        <label>Username
+          <input type="text" x-model="form.username" required placeholder="jsmith"
+                 autocapitalize="none" spellcheck="false">
+        </label>
+        <label>Password
+          <input type="password" x-model="form.password" required autocomplete="new-password">
+        </label>
+        <label>Role
+          <select x-model="form.role">
+            <option value="viewer">viewer — read only</option>
+            <option value="operator">operator — run playbooks, edit files</option>
+            <option value="admin">admin — everything, including users and credentials</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">Create</button>
+        <span class="text-sm fail" x-text="error"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <table class="table">
+      <thead>
+        <tr><th>User</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr>
+      </thead>
+      <tbody>
+        <template x-for="u in users" :key="u.id">
+          <tr>
+            <td>
+              <strong x-text="u.username"></strong>
+              <span class="badge" x-show="u.id === me" title="This is you">you</span>
+            </td>
+            <td>
+              <select :value="u.role" @change="setRole(u, $event.target.value)"
+                      :disabled="u.id === me">
+                <option value="viewer">viewer</option>
+                <option value="operator">operator</option>
+                <option value="admin">admin</option>
+              </select>
+            </td>
+            <td>
+              <span x-show="!u.disabled" class="ok">active</span>
+              <span x-show="u.disabled" class="muted">disabled</span>
+            </td>
+            <td class="text-sm muted" x-text="u.last_login_at ? u.last_login_at.replace('T',' ').slice(0,16) : 'never'"></td>
+            <td class="row-actions">
+              <button class="btn-ghost btn-sm" @click="resetPassword(u)">Set password</button>
+              <button class="btn-ghost btn-sm" x-show="!u.disabled" :disabled="u.id === me"
+                      @click="setDisabled(u, true)">Disable</button>
+              <button class="btn-ghost btn-sm" x-show="u.disabled"
+                      @click="setDisabled(u, false)">Enable</button>
+              <button class="btn-ghost btn-sm fail" :disabled="u.id === me"
+                      @click="remove(u)">Delete</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="!users.length">
+          <td colspan="5" class="muted">No accounts yet.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="text-sm muted" style="margin:.75rem 0 0;">
+      You cannot change your own role or disable your own account — that would end
+      your session with no way back. Ask another admin.
+    </p>
+  </div>
+</section>
+
+<script>
+function usersPage() {
+  return {
+    users: [], me: {{ current_user_id or 'null' }}, showForm: false, error: "",
+    form: {username: "", password: "", role: "viewer"},
+
+    resetForm() { this.form = {username: "", password: "", role: "viewer"}; this.error = ""; },
+
+    async load() {
+      const r = await fetch("/api/users");
+      this.users = r.ok ? await r.json() : [];
+      queueMicrotask(() => window.lucide && lucide.createIcons());
+    },
+
+    // Every mutation reloads rather than patching the row locally: the server
+    // refuses some changes (last admin, self-demotion) and the list should show
+    // what is actually stored, not what was clicked.
+    async send(url, method, body) {
+      const r = await fetch(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        this.error = d.detail || `${method} failed (${r.status})`;
+        alert(this.error);
+      }
+      await this.load();
+      return r.ok;
+    },
+
+    async create() {
+      this.error = "";
+      if (await this.send("/api/users", "POST", this.form)) {
+        this.showForm = false;
+        this.resetForm();
+      }
+    },
+    setRole(u, role)       { return this.send(`/api/users/${u.id}`, "PATCH", {role}); },
+    setDisabled(u, off)    { return this.send(`/api/users/${u.id}`, "PATCH", {disabled: off}); },
+    async resetPassword(u) {
+      const pw = prompt(`New password for ${u.username}`);
+      if (pw) await this.send(`/api/users/${u.id}`, "PATCH", {password: pw});
+    },
+    async remove(u) {
+      if (confirm(`Delete ${u.username}? Their run history stays, attributed to a removed account.`))
+        await this.send(`/api/users/${u.id}`, "DELETE");
+    },
+  };
+}
+</script>
+{% endblock %}

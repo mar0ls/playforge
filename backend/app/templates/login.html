@@ -18,8 +18,15 @@
 <body>
   <form class="login-card" method="post" action="/login">
     <h1>✨ Playforge</h1>
+    {% if multi_user %}
+    <p class="text-sm muted">Sign in with your account.</p>
+    <input type="text" name="username" placeholder="Username" autofocus autocomplete="username"
+           autocapitalize="none" spellcheck="false">
+    <input type="password" name="password" placeholder="Password" autocomplete="current-password">
+    {% else %}
     <p class="text-sm muted">This instance is password-protected.</p>
     <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
+    {% endif %}
     <button type="submit">Sign in</button>
     {% if error %}<div class="login-err">{{ error }}</div>{% endif %}
   </form>

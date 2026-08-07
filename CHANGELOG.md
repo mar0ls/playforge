@@ -3,6 +3,55 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.8.0] — 2026-08-07
+
+Multi-user is enforced, not just modelled. Sign in as a named account, and the
+role decides what you can call.
+
+### Added
+- **Accounts, roles and enforcement.** Sessions carry the user id inside the
+  signed cookie; `admin` / `operator` / `viewer` map to capabilities, and every
+  API route declares which one it needs. An unmapped route denies everyone, and a
+  test enumerates the app's real route table so an endpoint can't ship without
+  that decision being made.
+- **Two ways to create the first admin.** `ANSIBLE_GUI_ADMIN_USER` /
+  `ANSIBLE_GUI_ADMIN_PASSWORD` for automated deploys (both accept a `_FILE` form,
+  so the password can come from a docker/k8s secret rather than `.env`), or a
+  `/setup` page guarded by a one-time token printed to the container log.
+- **Users page** at `/users` — create, change role, enable/disable, reset a
+  password, delete. Linked in the sidebar for admins only.
+- `runs.user_id` is now populated, over both HTTP and the WebSocket.
+
+### Fixed
+- **The session signing key could fall back to a constant.** If the credential
+  master key couldn't be read, the key was derived from a fixed string in the
+  source — survivable only because the shared password was also in the mix. With
+  accounts there may be no shared password, so that fallback would have meant
+  anyone could forge a session. It now fails loudly instead.
+- **The run WebSocket checked the session but not the role.** HTTP middleware
+  doesn't cover WS scope, so a viewer could have started a run through the socket
+  that `POST /api/runs` refuses them. It now checks both.
+
+### Notes
+The setup page is token-gated for a specific reason: `docker-compose.yml`
+publishes the port on 0.0.0.0, so between `docker compose up -d` and the operator
+reaching a browser, an open setup page would let whoever got there first claim
+the instance. Verified against a running container — setup without the token, and
+with a wrong token, both return 403 and create no account.
+
+Existing installs are unaffected. With no accounts the app stays in
+single-password or open mode exactly as before, and a first boot in
+single-password mode does not open setup or nag toward accounts.
+
+Accounts are re-read from the database on every request rather than trusted from
+the cookie, so disabling an account ends its sessions immediately. Verified live:
+the same cookie goes from 200 to 401 across the disable.
+
+Role enforcement verified over HTTP against the built image, one account per
+role — reads open to all three, credential writes, user management, run-history
+deletion and provider config admin-only, running a playbook operator-and-above,
+and the resulting run attributed to the account that started it.
+
 ## [0.7.0] — 2026-08-05
 
 User accounts and roles — the schema and store half. Nothing enforces roles yet;

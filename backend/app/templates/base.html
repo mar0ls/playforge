@@ -76,6 +76,13 @@
       </a>
 
       <div class="section-label">System</div>
+      {# Only admins manage accounts; the API enforces it too, this just hides a
+         link that would 403. Absent entirely in single-password mode. #}
+      {% if request.state.user and request.state.user.role == 'admin' %}
+      <a href="/users" class="{% if active_nav == 'users' %}active{% endif %}">
+        <i class="icon" data-lucide="users"></i> Users
+      </a>
+      {% endif %}
       <a href="/settings" class="{% if active_nav == 'settings' %}active{% endif %}">
         <i class="icon" data-lucide="settings"></i> Settings
       </a>

@@ -12,12 +12,9 @@ from app.models.db import SessionLocal, User, init_db
 
 
 @pytest.fixture(autouse=True)
-async def _db():
-    await init_db()
-    async with SessionLocal() as s:
-        for u in (await s.execute(__import__("sqlalchemy").select(User))).scalars().all():
-            await s.delete(u)
-        await s.commit()
+async def _db(clean_users):
+    """`clean_users` removes accounts before and after; leaving one behind would
+    flip the whole app into account mode for later tests."""
 
 
 # --- hashing -----------------------------------------------------------------

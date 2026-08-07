@@ -166,6 +166,15 @@ async def multi_user_enabled() -> bool:
     return await count() > 0
 
 
+async def get(user_id: int):
+    """Look up an account by id, or None. Read on every authenticated request so
+    a disabled or deleted account loses its sessions immediately."""
+    from app.models.db import SessionLocal, User
+
+    async with SessionLocal() as s:
+        return await s.get(User, user_id)
+
+
 async def create(username: str, password: str, role: str = VIEWER):
     """Create an account. Raises UserError on a bad name/role or a duplicate."""
     from sqlalchemy import select
