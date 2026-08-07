@@ -1,9 +1,10 @@
 # Third-party components
 
-Playforge is built on open-source software. Most frontend libraries are vendored
-locally (in `backend/app/static/vendor/`); Monaco Editor is loaded from jsDelivr
-CDN by default. All components remain under their own licenses, reproduced/
-attributed here.
+Playforge is built on open-source software. Every frontend library is served
+locally — small ones from `backend/app/static/vendor/`, Monaco from
+`/opt/playforge/vendor/monaco` baked into the image at build time (see the
+Dockerfile). Nothing is fetched from a CDN at runtime. All components remain under
+their own licenses, reproduced/attributed here.
 
 ## Vendored JavaScript
 
@@ -12,7 +13,7 @@ attributed here.
 | htmx    | 2.0.3   | BSD-2-Clause / Zero-Clause BSD | https://htmx.org |
 | Alpine.js | 3.14.1 | MIT | https://alpinejs.dev |
 | Lucide  | 1.17.0  | ISC | https://lucide.dev |
-| Monaco Editor | 0.52.0 | MIT (loaded from jsDelivr CDN) | https://microsoft.github.io/monaco-editor |
+| Monaco Editor | 0.52.0 | MIT (baked into the image; licence at `/vendor/monaco/LICENSE`) | https://microsoft.github.io/monaco-editor |
 
 `backend/app/static/vendor/md.js` is original to this project (no third-party code).
 

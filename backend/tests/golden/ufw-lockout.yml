@@ -1,0 +1,26 @@
+name: UFW default-deny incoming with no SSH allow rule
+why: >
+  The flagship lockout case. Enabling a default deny policy without first
+  allowing port 22 drops your own SSH session the moment the play applies —
+  on a remote host that means losing access entirely.
+content: |
+  ---
+  - hosts: webservers
+    become: true
+    tasks:
+      - name: Install ufw
+        ansible.builtin.apt:
+          name: ufw
+          state: present
+      - name: Default deny incoming
+        community.general.ufw:
+          default: deny
+          direction: incoming
+      - name: Allow http
+        community.general.ufw:
+          rule: allow
+          port: "80"
+      - name: Enable ufw
+        community.general.ufw:
+          state: enabled
+expect_rules: [ufw-lockout-no-ssh]

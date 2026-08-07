@@ -1,0 +1,10 @@
+name: Playbook whose top-level entry is not a mapping
+why: >
+  Degenerate output that parses as valid YAML but is not a playbook — typically a
+  model emitting a bare string or a stray list item. The checker has to report it
+  rather than raise, because the agent's finish gate needs a structured answer
+  back even for garbage input.
+content: |
+  ---
+  - just a string, not a play
+expect_rules: [play-not-mapping]

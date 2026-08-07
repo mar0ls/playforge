@@ -2,10 +2,101 @@
 from __future__ import annotations
 
 import json
-from typing import Iterator
+import logging
+import random
+import time
+from typing import Callable, Iterator, TypeVar
 
 import anthropic
 import httpx
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# ---- Transient-failure retry -----------------------------------------------
+# A 429 from a hosted provider, or a 503 while Ollama loads a model, used to
+# surface to the user as a hard error. Only the httpx paths are wrapped:
+# the Anthropic SDK does its own retrying (see MAX_ATTEMPTS below), and stacking
+# ours on top would multiply the attempts.
+
+MAX_ATTEMPTS = 3
+_BACKOFF_BASE = 0.5          # seconds; doubled per attempt
+_BACKOFF_CAP = 8.0
+_RETRY_AFTER_CAP = 30.0      # ignore absurd Retry-After values rather than hang
+
+# Retried: rate limits, and the 5xx family that means "try again", plus 408/409/425.
+# Never retried: 400/401/403/404 — those are configuration or auth problems, and
+# retrying just makes a wrong API key look like a hang.
+_RETRY_STATUSES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+
+def _retry_after_seconds(exc: httpx.HTTPStatusError) -> float | None:
+    """Retry-After as seconds, if the server sent a sane one. Date form is ignored."""
+    raw = exc.response.headers.get("retry-after") if exc.response is not None else None
+    if not raw:
+        return None
+    try:
+        secs = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if secs < 0:
+        return None
+    return min(secs, _RETRY_AFTER_CAP)
+
+
+def _transient_delay(exc: Exception, attempt: int) -> float | None:
+    """Seconds to wait before retrying `exc`, or None if it isn't worth retrying."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response is None or exc.response.status_code not in _RETRY_STATUSES:
+            return None
+        after = _retry_after_seconds(exc)
+        if after is not None:
+            return after
+    elif not isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return None
+    # Exponential backoff with jitter, so several callers retrying at once don't
+    # march in lockstep into the same rate limit. The cap is applied after jitter,
+    # otherwise the 1.5x upper end of the jitter would push past it.
+    delay = min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_CAP) * (0.5 + random.random())
+    return min(delay, _BACKOFF_CAP)
+
+
+def _with_retries(call: Callable[[], T], *, what: str) -> T:
+    """Run `call`, retrying transient HTTP failures with backoff."""
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            return call()
+        except Exception as e:
+            delay = _transient_delay(e, attempt)
+            if delay is None or attempt == MAX_ATTEMPTS - 1:
+                raise
+            logger.warning("%s: %s — retrying in %.1fs (attempt %d/%d)",
+                           what, type(e).__name__, delay, attempt + 2, MAX_ATTEMPTS)
+            time.sleep(delay)
+    raise AssertionError("unreachable")
+
+
+def _stream_with_retries(make_stream: Callable[[], Iterator[str]], *, what: str) -> Iterator[str]:
+    """Same, for streams — but only until the first token.
+
+    Once a delta has reached the caller it's already on the user's screen, so a
+    retry would duplicate text. After that point failures propagate.
+    """
+    for attempt in range(MAX_ATTEMPTS):
+        produced = False
+        try:
+            for chunk in make_stream():
+                produced = True
+                yield chunk
+            return
+        except Exception as e:
+            delay = _transient_delay(e, attempt)
+            if produced or delay is None or attempt == MAX_ATTEMPTS - 1:
+                raise
+            logger.warning("%s: %s before first token — retrying in %.1fs (attempt %d/%d)",
+                           what, type(e).__name__, delay, attempt + 2, MAX_ATTEMPTS)
+            time.sleep(delay)
 
 
 # ---- Provider resolution ---------------------------------------------------
@@ -64,11 +155,15 @@ def _openai_chat(messages: list, cfg: dict, *, json_mode: bool = False, max_toke
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    with httpx.Client(timeout=cfg["timeout"]) as c:
-        r = c.post(f"{cfg['base_url']}/chat/completions",
-                   headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=body)
-        r.raise_for_status()
-        return r.json()
+
+    def _call() -> dict:
+        with httpx.Client(timeout=cfg["timeout"]) as c:
+            r = c.post(f"{cfg['base_url']}/chat/completions",
+                       headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=body)
+            r.raise_for_status()
+            return r.json()
+
+    return _with_retries(_call, what="openai chat")
 
 
 def _ollama_chat(cfg: dict, messages: list, *, fmt: str | None = None,
@@ -82,10 +177,14 @@ def _ollama_chat(cfg: dict, messages: list, *, fmt: str | None = None,
     }
     if fmt:
         payload["format"] = fmt
-    with httpx.Client(timeout=cfg["timeout"]) as c:
-        r = c.post(f"{cfg['url']}/api/chat", json=payload)
-        r.raise_for_status()
-        return r.json()
+
+    def _call() -> dict:
+        with httpx.Client(timeout=cfg["timeout"]) as c:
+            r = c.post(f"{cfg['url']}/api/chat", json=payload)
+            r.raise_for_status()
+            return r.json()
+
+    return _with_retries(_call, what="ollama chat")
 
 
 # ---- Streaming (token-by-token) --------------------------------------------
@@ -98,40 +197,47 @@ def _ollama_chat_stream(cfg: dict, messages: list, *, num_predict: int = 1200) -
         "keep_alive": cfg.get("keep_alive", "30m"), "messages": messages,
         "options": {"temperature": 0.3, "num_predict": num_predict},
     }
-    with httpx.Client(timeout=cfg["timeout"]) as c:
-        with c.stream("POST", f"{cfg['url']}/api/chat", json=payload) as r:
-            r.raise_for_status()
-            for line in r.iter_lines():
-                if not line:
-                    continue
-                obj = json.loads(line)
-                delta = (obj.get("message") or {}).get("content", "")
-                if delta:
-                    yield delta
-                if obj.get("done"):
-                    break
+    def _open() -> Iterator[str]:
+        with httpx.Client(timeout=cfg["timeout"]) as c:
+            with c.stream("POST", f"{cfg['url']}/api/chat", json=payload) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    delta = (obj.get("message") or {}).get("content", "")
+                    if delta:
+                        yield delta
+                    if obj.get("done"):
+                        break
+
+    yield from _stream_with_retries(_open, what="ollama stream")
 
 
 def _openai_chat_stream(cfg: dict, messages: list, *, max_tokens: int = 1200) -> Iterator[str]:
     body = {"model": cfg["model"], "messages": messages, "max_tokens": max_tokens,
             "temperature": 0.3, "stream": True}
-    with httpx.Client(timeout=cfg["timeout"]) as c:
-        with c.stream("POST", f"{cfg['base_url']}/chat/completions",
-                      headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=body) as r:
-            r.raise_for_status()
-            for line in r.iter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[len("data:"):].strip()
-                if data == "[DONE]":
-                    break
-                delta = (json.loads(data)["choices"][0].get("delta") or {}).get("content")
-                if delta:
-                    yield delta
+    def _open() -> Iterator[str]:
+        with httpx.Client(timeout=cfg["timeout"]) as c:
+            with c.stream("POST", f"{cfg['base_url']}/chat/completions",
+                          headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=body) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        break
+                    delta = (json.loads(data)["choices"][0].get("delta") or {}).get("content")
+                    if delta:
+                        yield delta
+
+    yield from _stream_with_retries(_open, what="openai stream")
 
 
 def _anthropic_chat_stream(cfg: dict, system: str, messages: list, *, max_tokens: int = 1200) -> Iterator[str]:
-    client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"])
+    client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"],
+                                 max_retries=MAX_ATTEMPTS - 1)
     with client.messages.stream(model=cfg["model"], max_tokens=max_tokens,
                                 system=system, messages=messages) as stream:
         for text in stream.text_stream:
@@ -158,7 +264,8 @@ def _provider_chat_stream(provider: str, system: str, messages: list[dict], cfg:
 def _provider_chat(provider: str, system: str, messages: list[dict], cfg: dict,
                    *, max_tokens: int = 1200) -> str:
     if provider == "anthropic":
-        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"])
+        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"],
+                                 max_retries=MAX_ATTEMPTS - 1)
         resp = client.messages.create(model=cfg["model"], max_tokens=max_tokens,
                                       system=system, messages=messages)  # type: ignore[arg-type]
         return next((b.text for b in resp.content if b.type == "text"), "")
@@ -174,7 +281,8 @@ def _provider_chat(provider: str, system: str, messages: list[dict], cfg: dict,
 
 def _provider_text(provider: str, system: str, user: str, cfg: dict, *, max_tokens: int = 600) -> str:
     if provider == "anthropic":
-        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"])
+        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"],
+                                 max_retries=MAX_ATTEMPTS - 1)
         resp = client.messages.create(model=cfg["model"], max_tokens=max_tokens, system=system,
                                       messages=[{"role": "user", "content": user}])
         return next((b.text for b in resp.content if b.type == "text"), "")
@@ -193,7 +301,8 @@ def _provider_json(provider: str, system: str, user: str, cfg: dict, *, max_toke
     from .generate import _parse_spec
 
     if provider == "anthropic":
-        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"])
+        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=cfg["timeout"],
+                                 max_retries=MAX_ATTEMPTS - 1)
         resp = client.messages.create(model=cfg["model"], max_tokens=max_tokens, system=system,
                                       messages=[{"role": "user", "content": user}])
         return _parse_spec(next((b.text for b in resp.content if b.type == "text"), ""))
@@ -211,7 +320,8 @@ def _provider_json(provider: str, system: str, user: str, cfg: dict, *, max_toke
 # ---- Probing (Settings page) -----------------------------------------------
 
 def probe_anthropic(api_key: str, *, timeout: float = 30.0) -> list[dict]:
-    client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
+    client = anthropic.Anthropic(api_key=api_key, timeout=timeout,
+                                 max_retries=MAX_ATTEMPTS - 1)
     return [{"id": m.id, "display_name": getattr(m, "display_name", m.id)}
             for m in client.models.list()]
 

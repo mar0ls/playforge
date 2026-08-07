@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -113,50 +113,56 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
     if not base.get("playbook"):
         raise HTTPException(400, "playbook is required (directly or via a template)")
 
-    # Resolve credentials: pick the first SSH-key credential and inject its content.
-    if credential_ids:
-        async with SessionLocal() as session:
-            creds = (await session.execute(
-                select(Credential).where(Credential.id.in_(credential_ids))
-            )).scalars().all()
-        for c in creds:
-            if c.kind == "ssh_key":
-                content = cred_store.read_secret(c.id)
-                if content:
-                    base["ssh_key_content"] = content
-                break  # ansible-runner supports one ssh_key per run; first wins
-        for c in creds:
-            if c.kind == "ssh_password":
-                pw = cred_store.read_secret(c.id)
-                if pw:
-                    base["ssh_password_content"] = pw.rstrip("\n")
-                break  # one SSH login password per run; first wins
-        for c in creds:
-            if c.kind == "vault_password":
-                vpass = cred_store.read_secret(c.id)
-                if vpass:
-                    base["vault_password_content"] = vpass.rstrip("\n")
-                break  # one vault password per run; first wins
-        for c in creds:
-            if c.kind == "become_password":
-                bpass = cred_store.read_secret(c.id)
-                if bpass:
-                    base["become_password_content"] = bpass.rstrip("\n")
-                break  # one become password per run; first wins
-        # WireGuard keys (and any other key material the playbook needs as a file)
-        # are written to a 0600 temp dir at run time; their paths are exposed as
-        # extra-vars `wireguard_keys` (name -> path) so a playbook can reference them.
-        wg: dict[str, str] = {}
-        for c in creds:
-            if c.kind != "wireguard_key":
-                continue
-            secret = cred_store.read_secret(c.id)   # read+decrypt once per credential
-            if secret:
-                wg[c.name] = secret
-        if wg:
-            base["wireguard_keys"] = wg
+    base.update(await _resolve_credentials(credential_ids))
 
     return RunRequest(**base), environment_id
+
+
+async def _resolve_credentials(credential_ids: list[int]) -> dict:
+    """Credential ids → decrypted RunRequest fields.
+
+    Shared by the playbook path and the ad-hoc endpoint so the two can't drift —
+    ad-hoc used to accept no credentials at all, which made it fail on exactly the
+    hosts a normal run could reach.
+    """
+    if not credential_ids:
+        return {}
+
+    async with SessionLocal() as session:
+        creds = (await session.execute(
+            select(Credential).where(Credential.id.in_(credential_ids))
+        )).scalars().all()
+
+    out: dict = {}
+    # ansible-runner takes one of each per run; first of a kind wins.
+    for kind, field, strip in (
+        ("ssh_key", "ssh_key_content", False),
+        ("ssh_password", "ssh_password_content", True),
+        ("vault_password", "vault_password_content", True),
+        ("become_password", "become_password_content", True),
+    ):
+        for c in creds:
+            if c.kind != kind:
+                continue
+            secret = cred_store.read_secret(c.id)
+            if secret:
+                out[field] = secret.rstrip("\n") if strip else secret
+            break
+
+    # WireGuard keys (and any other key material the playbook needs as a file) are
+    # written to a 0600 temp dir at run time; their paths are exposed as the
+    # `wireguard_keys` extra-var (name -> path) so a playbook can reference them.
+    wg: dict[str, str] = {}
+    for c in creds:
+        if c.kind != "wireguard_key":
+            continue
+        secret = cred_store.read_secret(c.id)   # read+decrypt once per credential
+        if secret:
+            wg[c.name] = secret
+    if wg:
+        out["wireguard_keys"] = wg
+
+    return out
 
 
 def _error_text(f: dict) -> str:
@@ -418,13 +424,28 @@ def _controller_preflight(check_mode: bool) -> dict:
     }
 
 
+def _actor_id(scope) -> int | None:
+    """Id of the signed-in user, or None in single-password / no-auth mode.
+
+    `request.state.user` is set by the auth middleware; the attribute is absent
+    when a route is exercised directly in tests.
+    """
+    user = getattr(getattr(scope, "state", None), "user", None)
+    return getattr(user, "id", None)
+
+
 @router.post("")
-async def start_run(payload: RunIn):
+# `request` defaults to None so the route stays callable directly, which is how
+# this suite tests the API layer. FastAPI still injects it over HTTP. It is only
+# used for attribution — authorisation happens in the auth middleware.
+async def start_run(payload: RunIn,
+                    request: Request = None):  # type: ignore[assignment]
     """Run a playbook synchronously (waits for completion). For live output use the WebSocket."""
     req, environment_id = await _build_request(payload)
     async with SessionLocal() as session:
         run = Run(project_id=req.project_id, playbook=req.playbook, inventory=req.inventory,
-                  tags=",".join(req.tags), status="running", environment_id=environment_id)
+                  tags=",".join(req.tags), status="running", environment_id=environment_id,
+                  user_id=_actor_id(request))
         session.add(run)
         await session.commit()
         await session.refresh(run)
@@ -593,12 +614,24 @@ class AdhocIn(BaseModel):
     module: str = "ping"
     args: str = ""
     inventory: str = ""
+    credential_ids: list[int] = []
 
 
 @router.post("/adhoc")
 async def adhoc(payload: AdhocIn):
-    result = await run_adhoc(payload.project_id, payload.host_pattern,
-                             payload.module, payload.args, payload.inventory)
+    try:
+        storage.paths_for(payload.project_id)
+    except storage.StorageError as e:
+        raise HTTPException(404, str(e))
+
+    creds = await _resolve_credentials(payload.credential_ids)
+    result = await run_adhoc(
+        payload.project_id, payload.host_pattern,
+        payload.module, payload.args, payload.inventory,
+        ssh_key_content=creds.get("ssh_key_content", ""),
+        ssh_password_content=creds.get("ssh_password_content", ""),
+        become_password_content=creds.get("become_password_content", ""),
+    )
     return summarize(result)
 
 
@@ -606,12 +639,28 @@ async def adhoc(payload: AdhocIn):
 async def run_ws(ws: WebSocket):
     """Client sends a RunIn JSON, receives events; `{"action":"cancel"}` aborts.
 
-    HTTP middleware doesn't cover WS scope, so the session cookie is re-checked
-    here when auth is enabled — otherwise a LAN attacker could open a WS and
-    run any playbook with the configured credentials.
+    HTTP middleware doesn't cover WS scope, so both the session *and* the role are
+    re-checked here — otherwise a LAN attacker could open a WS and run any playbook
+    with the configured credentials, and a viewer could bypass the capability check
+    that guards `POST /api/runs` simply by using the socket instead.
     """
-    if auth.auth_enabled() and not auth.verify_token(ws.cookies.get(auth.SESSION_COOKIE)):
-        await ws.close(code=4401)  # app-range unauthorized; reject before accept()
+    from app.core import users as users_core
+
+    actor_id: int | None = None
+    if await users_core.multi_user_enabled():
+        # Not `session`: that name is the DB session later in this function.
+        auth_session = auth.read_token(ws.cookies.get(auth.SESSION_COOKIE))
+        user = (await users_core.get(auth_session.user_id)
+                if auth_session and auth_session.user_id else None)
+        if user is None or user.disabled:
+            await ws.close(code=4401)  # app-range unauthorized; reject before accept()
+            return
+        if not users_core.can(user.role, "run"):
+            await ws.close(code=4403)  # authenticated, but the role may not run
+            return
+        actor_id = user.id
+    elif auth.auth_enabled() and not auth.verify_token(ws.cookies.get(auth.SESSION_COOKIE)):
+        await ws.close(code=4401)
         return
     await ws.accept()
     try:
@@ -663,6 +712,7 @@ async def run_ws(ws: WebSocket):
             project_id=req.project_id, playbook=req.playbook, inventory=req.inventory,
             tags=",".join(req.tags), status="running",
             template_id=run_in.template_id, environment_id=environment_id,
+            user_id=actor_id,
         )
         session.add(run_row)
         await session.commit()

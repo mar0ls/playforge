@@ -53,3 +53,33 @@ def tmp_project(tmp_path: Path) -> Path:
     (tmp_path / "playbooks").mkdir()
     (tmp_path / "inventories" / "production").mkdir(parents=True)
     return tmp_path
+
+
+async def delete_all_users() -> None:
+    """Drop every account.
+
+    The whole suite shares one SQLite file, and the presence of accounts changes
+    how the app behaves globally: `multi_user_enabled()` flips authentication into
+    account mode, so a test that leaves a user behind makes later tests (the
+    WebSocket ones especially) authenticate against a mode they never asked for.
+    Call this before *and* after any test that creates accounts.
+    """
+    from sqlalchemy import select
+
+    from app.models.db import SessionLocal, User
+
+    async with SessionLocal() as s:
+        for user in (await s.execute(select(User))).scalars().all():
+            await s.delete(user)
+        await s.commit()
+
+
+@pytest.fixture
+async def clean_users():
+    """Guarantee no accounts exist around a test, in both directions."""
+    from app.models.db import init_db
+
+    await init_db()
+    await delete_all_users()
+    yield
+    await delete_all_users()

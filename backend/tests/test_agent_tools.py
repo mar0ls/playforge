@@ -106,8 +106,8 @@ def test_preview_and_run_tools(monkeypatch):
     import types
     from app.core import runner as runner_mod
     calls = []
-    def _fake(req):
-        calls.append({"check": req.check, "playbook": req.playbook})
+    def _fake(req, isolation=None):
+        calls.append({"check": req.check, "playbook": req.playbook, "isolation": isolation})
         return types.SimpleNamespace(status="successful", rc=0, failures=[], changes=[], stats={})
     monkeypatch.setattr(runner_mod, "run_playbook_sync", _fake)
     p = _proj()
@@ -129,7 +129,7 @@ def test_preview_surfaces_failures(monkeypatch):
     import types
     from app.core import runner as runner_mod
     monkeypatch.setattr(runner_mod, "run_playbook_sync",
-        lambda req: types.SimpleNamespace(status="failed", rc=2, changes=[], stats={},
+        lambda req, isolation=None: types.SimpleNamespace(status="failed", rc=2, changes=[], stats={},
             failures=[{"host": "vps1", "task": "install", "result": {"msg": "No package matching"}}]))
     p = _proj()
     try:

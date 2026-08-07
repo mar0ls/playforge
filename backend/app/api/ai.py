@@ -297,7 +297,13 @@ async def agent(payload: AgentIn):
 
     from app.core import agent_tools
     from app.core.agent import READ, MUTATE, CONFIRM
-    tools = agent_tools.build_tools(payload.project_id, get_run=_make_get_run(payload.project_id))
+    from app.core.runner import isolation_kwargs
+    # Resolved here: the agent's run/preview tools are sync callbacks on a worker
+    # thread and can't read the (async) setting themselves.
+    isolation = await isolation_kwargs(storage.paths_for(payload.project_id).root)
+    tools = agent_tools.build_tools(payload.project_id,
+                                    get_run=_make_get_run(payload.project_id),
+                                    isolation=isolation)
     levels = {READ}
     if payload.allow_mutate:
         levels.add(MUTATE)

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>First-time setup — Playforge</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <style>
+    body { display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; }
+    .login-card { width: min(420px, 92vw); background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; padding: 1.5rem; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+    .login-card h1 { font-size: 1.2rem; margin: 0 0 .5rem; display: flex; align-items: center; gap: .5rem; }
+    .login-card input { width: 100%; box-sizing: border-box; margin: .5rem 0; }
+    .login-card button { width: 100%; }
+    .login-err { color: var(--fail, #f85149); font-size: .9rem; margin-top: .5rem; }
+    .hint { font-size: .85rem; }
+    .hint code { background: #0d1117; padding: .1rem .35rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <form class="login-card" method="post" action="/setup">
+    <h1>✨ Create the first administrator</h1>
+    <p class="text-sm muted hint">
+      Paste the setup token from the container log. It stops anyone else who can
+      reach this port from claiming the instance first.<br>
+      <code>docker compose logs app | grep -A2 "Setup token"</code>
+    </p>
+    <input type="text" name="token" placeholder="Setup token" autofocus
+           autocapitalize="none" spellcheck="false" autocomplete="off">
+    <input type="text" name="username" placeholder="Username" autocapitalize="none"
+           spellcheck="false" autocomplete="username">
+    <input type="password" name="password" placeholder="Password" autocomplete="new-password">
+    <button type="submit">Create administrator</button>
+    {% if error %}<div class="login-err">{{ error }}</div>{% endif %}
+  </form>
+</body>
+</html>

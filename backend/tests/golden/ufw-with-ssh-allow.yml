@@ -1,0 +1,23 @@
+name: UFW default-deny incoming but SSH is explicitly allowed
+why: >
+  Negative case guarding the lockout rule against false positives. A correct
+  hardening playbook allows 22 before the deny policy; firing here would train
+  users to ignore the warning.
+content: |
+  ---
+  - hosts: webservers
+    become: true
+    tasks:
+      - name: Allow ssh
+        community.general.ufw:
+          rule: allow
+          port: "22"
+      - name: Default deny incoming
+        community.general.ufw:
+          default: deny
+          direction: incoming
+      - name: Enable ufw
+        community.general.ufw:
+          state: enabled
+expect_rules: []
+expect_absent: [ufw-lockout-no-ssh]

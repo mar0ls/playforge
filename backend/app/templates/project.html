@@ -6,11 +6,10 @@
   <span x-text="title" x-data="{title: '{{ project_id }}'}">{{ project_id }}</span>
 {% endblock %}
 {% block head_extra %}
-  <!-- Monaco is loaded from jsDelivr by default (documented in README / licenses). -->
+  <!-- Monaco is vendored into the image (Dockerfile) and served from /vendor.
+       No SRI/crossorigin: same-origin, so there's nothing third-party to pin. -->
   <link rel="stylesheet" data-name="vs/editor/editor.main"
-        href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css"
-        integrity="sha384-WCfMZP6K9Oykzu17MglzYPUUUPrgmWK2WglGpqyNEzX/A9Yo9txzqQf4IO+7RbFW"
-        crossorigin="anonymous">
+        href="/vendor/monaco/vs/editor/editor.main.css">
 {% endblock %}
 
 {% block content %}
@@ -585,15 +584,15 @@ function projectPage(projectId) {
     ensureMonaco() {
       if (heavy.monacoReady) return heavy.monacoReady;
       heavy.monacoReady = new Promise((resolve) => {
-        const cdn = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs";
+        const vs = "/vendor/monaco/vs";
         const boot = () => {
-          window.require.config({ paths: { vs: cdn }});
+          window.require.config({ paths: { vs }});
           window.require(["vs/editor/editor.main"], () => resolve(window.monaco));
         };
         if (window.monaco) return resolve(window.monaco);
         if (window.require) return boot();
         const s = document.createElement("script");
-        s.src = `${cdn}/loader.js`; s.onload = boot; document.head.appendChild(s);
+        s.src = `${vs}/loader.js`; s.onload = boot; document.head.appendChild(s);
       });
       return heavy.monacoReady;
     },
@@ -823,6 +822,9 @@ function projectPage(projectId) {
             module: this.adhoc.module.trim(),
             args: this.adhoc.args,
             inventory: this.runForm.inventory,
+            // Same credentials as the Run form above — ad-hoc hits the same hosts,
+            // so needing key/sudo auth there means needing it here too.
+            credential_ids: this.runCredentialIds(),
           }),
         });
         const d = await r.json().catch(() => ({}));

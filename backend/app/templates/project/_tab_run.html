@@ -271,6 +271,10 @@
           <code>setup</code> (no args) — gather facts ·
           <code>command</code> <code>args=uptime</code> ·
           <code>service</code> <code>args=name=nginx state=restarted</code></p>
+        <p class="text-xs muted" x-show="runCredentialIds().length">
+          <i class="icon" data-lucide="key-round"></i>
+          Uses the credentials selected above (<span x-text="runCredentialIds().length"></span>).
+        </p>
         <div class="row gap-sm mt-1">
           <button class="btn-sm" @click="runAdhoc()" :disabled="adhoc.busy || !adhoc.module.trim()">
             <i class="icon" data-lucide="play"></i>

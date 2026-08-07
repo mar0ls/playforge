@@ -473,7 +473,10 @@ def file_at(project_id: str, relative: str, sha: str) -> str:
         raise StorageError(f"invalid sha: {sha!r}")
     repo = Repo(pp.root)
     try:
-        return repo.git.show(f"{sha}:{relative}")
+        # strip_newline_in_stdout=False: GitPython otherwise drops the file's
+        # trailing newline, so "restore past version" handed back content that
+        # differed from what was committed.
+        return repo.git.show(f"{sha}:{relative}", strip_newline_in_stdout=False)
     except GitCommandError as e:
         raise StorageError(f"file not in {sha[:8]}: {e.stderr or e}".strip())
 

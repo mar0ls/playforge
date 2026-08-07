@@ -4,6 +4,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+from app.models import migrations
+from app.models.migrations import SCHEMA_VERSION  # re-exported: callers read it from here
 
 
 class Base(DeclarativeBase):
@@ -21,6 +23,28 @@ class Project(Base):
     runs: Mapped[list["Run"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     environments: Mapped[list["Environment"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     templates: Mapped[list["RunTemplate"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+class User(Base):
+    """A named account with a role.
+
+    Nothing enforces roles yet — this is the schema half of multi-user. Auth still
+    falls back to the single shared password when the table is empty, so existing
+    installs keep working.
+
+    `password_hash` carries its own KDF parameters (see core/users.py); it is never
+    exposed by the API.
+    """
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(16), default="viewer")  # admin | operator | viewer
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Credential(Base):
@@ -136,6 +160,10 @@ class Run(Base):
     stats_json: Mapped[str] = mapped_column(Text, default="")
     failures_json: Mapped[str] = mapped_column(Text, default="")
     artifacts_json: Mapped[str] = mapped_column(Text, default="")  # files the run wrote into the repo
+    # Who started it. Null for runs from before multi-user, for scheduled runs,
+    # and while the app is in single-password mode — the audit trail only starts
+    # meaning something once accounts exist.
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     project: Mapped[Project] = relationship(back_populates="runs")
 
@@ -160,23 +188,14 @@ def _sqlite_pragmas(dbapi_conn, _record):
     cur.close()
 
 
-def _soft_migrate(sync_conn) -> None:
-    """Idempotent SQLite migration: add columns that may not exist in old DBs."""
-    cols = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(runs)").fetchall()}
-    if "template_id" not in cols:
-        sync_conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN template_id INTEGER")
-    if "environment_id" not in cols:
-        sync_conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN environment_id INTEGER")
-    if "schedule_id" not in cols:
-        sync_conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN schedule_id INTEGER")
-    if "artifacts_json" not in cols:
-        sync_conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN artifacts_json TEXT DEFAULT ''")
-    sched_cols = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(schedules)").fetchall()}
-    if sched_cols and "timezone" not in sched_cols:
-        sync_conn.exec_driver_sql("ALTER TABLE schedules ADD COLUMN timezone VARCHAR(64) DEFAULT ''")
-
-
 async def init_db() -> None:
+    """Create missing tables, then bring the schema up to `SCHEMA_VERSION`.
+
+    The freshness check has to happen before `create_all` — that's the only
+    moment a brand-new database is distinguishable from a pre-0.1.0 one that was
+    never version-stamped. See `app.models.migrations`.
+    """
     async with engine.begin() as conn:
+        fresh = await conn.run_sync(migrations.is_fresh_database)
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_soft_migrate)
+        await conn.run_sync(lambda sync_conn: migrations.run(sync_conn, fresh=fresh))

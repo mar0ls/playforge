@@ -27,7 +27,33 @@ def _truncate(s: str, n: int = _MAX_OBS_FILE) -> str:
     return s if len(s) <= n else s[:n] + f"\n… (truncated, {len(s)} chars total)"
 
 
-def build_tools(project_id: str, *, get_run=None) -> dict[str, Tool]:
+def normalize_escapes(content: str) -> tuple[str, bool]:
+    """Turn a single-line body full of literal `\\n` into real newlines.
+
+    Weaker models (deepseek-coder-v2 and friends) sometimes emit file content as
+    one line with backslash-n instead of newlines. Written verbatim the file exists
+    but is a single line, so Ansible fails to parse it.
+
+    Only fires when the content has literal `\\n` and no real newline at all —
+    content that already has newlines is left alone, so a playbook that legitimately
+    contains `\\n` inside a string isn't mangled.
+
+    Explicit replacements rather than codecs `unicode_escape`, which round-trips
+    through latin-1 and corrupts any non-ASCII text (e.g. accented comments).
+
+    Returns (content, changed).
+    """
+    if "\n" in content or "\\n" not in content:
+        return content, False
+    out = (content
+           .replace("\\r\\n", "\n")
+           .replace("\\n", "\n")
+           .replace("\\t", "\t")
+           .replace('\\"', '"'))
+    return out, True
+
+
+def build_tools(project_id: str, *, get_run=None, isolation: dict | None = None) -> dict[str, Tool]:
     """Build the tool registry for `project_id`. `get_run(run_id)->dict` is injected
     by the API layer (it needs the DB) so this module stays sync + importable."""
     root = storage.paths_for(project_id).root
@@ -64,9 +90,15 @@ def build_tools(project_id: str, *, get_run=None) -> dict[str, Tool]:
     # ---- mutating (each commits) ----
     def t_write_file(a: dict) -> dict:
         is_yaml = a.get("path", "").endswith((".yml", ".yaml"))
-        content = playbook_rules.autofix_yaml(a.get("content", "")) if is_yaml else a.get("content", "")
+        content, unescaped = normalize_escapes(a.get("content", ""))
+        if is_yaml:
+            content = playbook_rules.autofix_yaml(content)
         storage.write_file(project_id, a["path"], content, a.get("message") or f"AI: write {a['path']}")
         obs: dict = {"saved": a["path"]}
+        if unescaped:
+            # Surface it so the agent can say so in its summary instead of silently
+            # "fixing" a file the user never saw go wrong.
+            obs["normalized_escapes"] = True
         if is_yaml:
             # The self-checking layer: report rule violations AND hallucinated modules
             # so the agent can fix them before finishing (it's told to in the prompt).
@@ -95,7 +127,7 @@ def build_tools(project_id: str, *, get_run=None) -> dict[str, Tool]:
     def _run(playbook: str, inventory: str, check: bool) -> dict:
         from app.core.runner import RunRequest, run_playbook_sync
         req = RunRequest(project_id=project_id, playbook=playbook, inventory=inventory or "", check=check)
-        res = run_playbook_sync(req)
+        res = run_playbook_sync(req, isolation=isolation)
         # Trim failures to what the agent needs to reason about a fix.
         fails = [{"host": f.get("host"), "task": f.get("task"),
                   "msg": (f.get("result", {}) or {}).get("msg") or f.get("error") or f.get("stderr", "")}

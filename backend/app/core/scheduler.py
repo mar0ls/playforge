@@ -135,11 +135,16 @@ def _job_id(schedule_id: int) -> str:
 
 
 def _build_trigger(schedule: Schedule) -> CronTrigger:
-    """Per-schedule cron trigger that honours the row's `timezone` (empty = UTC)."""
-    tz = _tz_for(getattr(schedule, "timezone", "") or "")
-    if tz is not None:
-        return CronTrigger.from_crontab(schedule.cron_expr, timezone=tz)
-    return CronTrigger.from_crontab(schedule.cron_expr)
+    """Per-schedule cron trigger that honours the row's `timezone` (empty = UTC).
+
+    UTC is passed explicitly for blank/unknown timezones. `CronTrigger.from_crontab`
+    with no timezone falls back to the *process* local zone, not the scheduler's,
+    so setting TZ on the container used to silently shift every schedule that
+    didn't name one — and `next_fire_iso` computes blank-timezone times in real
+    UTC, so the "next fire" shown in the UI disagreed with when the job ran.
+    """
+    tz = _tz_for(getattr(schedule, "timezone", "") or "") or ZoneInfo("UTC")
+    return CronTrigger.from_crontab(schedule.cron_expr, timezone=tz)
 
 
 def sync_schedule(schedule: Schedule) -> None:

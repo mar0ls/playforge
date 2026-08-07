@@ -1,0 +1,9 @@
+name: Play without hosts
+why: Structural minimum — a play with no hosts cannot run.
+content: |
+  ---
+  - become: true
+    tasks:
+      - name: Ping
+        ansible.builtin.ping:
+expect_rules: [play-missing-hosts]

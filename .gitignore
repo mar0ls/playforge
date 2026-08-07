@@ -7,6 +7,11 @@ __pycache__/
 .ruff_cache/
 data/
 !data/.gitkeep
+
+# backup archives — these hold the credential master key and your project repos.
+# Never commit one. (scripts/backup.sh writes here by default.)
+backups/
+*.tar.gz.gpg
 .DS_Store
 .idea/
 .vscode/
