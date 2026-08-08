@@ -219,7 +219,10 @@ CI runs the suite inside the image, where `CHANGELOG.md` isn't present.)
 The `Release` workflow verifies the tag agrees with the code, builds and pushes
 `amd64` + `arm64` to Docker Hub, pulls the published image back to check `/health`
 answers with the version it just tagged, and then opens the GitHub Release. It
-needs two repository secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+needs one repository secret: `DOCKERHUB_TOKEN`, a Docker Hub access token with
+Read/Write (not the account password). The Docker Hub username sits in the
+workflow's `env` — it's already public in the image name, so making it a secret
+would protect nothing.
 
 The container exposes `GET /health` (DB ping included). The base compose wires
 a Docker healthcheck against it, so `docker ps` shows `(healthy)` once the

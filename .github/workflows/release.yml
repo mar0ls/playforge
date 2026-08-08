@@ -22,9 +22,12 @@ name: Release
 # pushes and wrong for `workflow_dispatch`, where `github.ref` is the *branch*
 # the workflow was dispatched from, not the tag being released.
 #
-# Required repository secrets:
-#   DOCKERHUB_USERNAME  Docker Hub account
-#   DOCKERHUB_TOKEN     Docker Hub access token with Read/Write (NOT the password)
+# Required repository secret (one):
+#   DOCKERHUB_TOKEN     Docker Hub access token with Read/Write (NOT the account password)
+#
+# The Docker Hub username lives in `env` below, not in secrets. `docker login`
+# needs it, but it isn't secret — it's already in the image name and the repo URL,
+# so storing it as a secret would protect nothing and add a setup step.
 
 "on":
   push:
@@ -38,6 +41,7 @@ name: Release
 
 env:
   IMAGE: docker.io/mar0ls/playforge
+  DOCKERHUB_USER: mar0ls
 
 jobs:
   publish:
@@ -64,23 +68,32 @@ jobs:
             *) echo "::error::expected a v-prefixed tag, got '$RAW_TAG'"; exit 1 ;;
           esac
           version="${RAW_TAG#v}"
+          # A prerelease tag carries a suffix the source doesn't: v0.9.0-rc1 is a
+          # candidate for 0.9.0, so __version__ and the CHANGELOG are checked
+          # against the base. Without this, rehearsing a release would mean
+          # editing __version__ to "0.9.0-rc1" and back again.
+          base="${version%%-*}"
 
           code="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' backend/app/__init__.py)"
-          if [ "$version" != "$code" ]; then
-            echo "::error::tag $RAW_TAG does not match __version__ '$code' in backend/app/__init__.py"
+          if [ "$base" != "$code" ]; then
+            echo "::error::tag $RAW_TAG targets $base but __version__ is '$code' in backend/app/__init__.py"
             exit 1
           fi
-          if ! grep -q "\[$version\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no [$version] section"
+          if ! grep -q "\[$base\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no [$base] section"
             exit 1
           fi
 
           # A prerelease (0.1.0-rc1) publishes only its own exact tag; it must
           # never move `latest` or the major.minor alias that users track.
-          tags="$IMAGE:$version"
+          # Braces are load-bearing: in some shells `$IMAGE:latest` parses as the
+          # modifier `:l` (lowercase) followed by "atest", which would publish
+          # `playforgeatest` instead of `latest` without failing. Actions runs bash,
+          # where it is fine, but this is too quiet a way to get it wrong.
+          tags="${IMAGE}:${version}"
           case "$version" in
-            *-*) echo "prerelease — publishing $version only" ;;
-            *)   tags="$tags,$IMAGE:${version%.*},$IMAGE:latest" ;;
+            *-*) echo "prerelease — publishing ${version} only" ;;
+            *)   tags="${tags},${IMAGE}:${version%.*},${IMAGE}:latest" ;;
           esac
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -93,7 +106,7 @@ jobs:
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ env.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
