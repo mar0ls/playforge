@@ -32,8 +32,10 @@ genuinely breaking change would arrive as `/api/v2` alongside the existing paths
 with `/api` kept working for at least one minor release after the CHANGELOG
 announces it.
 
-Publishing to Docker Hub needs `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` in the
-repository secrets. The release workflow refuses to publish when the tag,
+Publishing to Docker Hub needs one repository secret, `DOCKERHUB_TOKEN` — the
+username lives in the workflow's `env`, since it's already public in the image
+name and making it a secret would protect nothing. The release workflow refuses
+to publish when the tag,
 `__version__` and CHANGELOG disagree, and smoke-tests `/health` on the pushed
 image before creating the GitHub release. A prerelease tag (`v0.9.0-rc1`)
 publishes only its own tag and does not move `latest`, which is the cheap way to
