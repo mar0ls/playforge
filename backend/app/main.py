@@ -90,15 +90,6 @@ _SECURITY_HEADERS = {
 }
 
 
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    """Set security headers on every response, without overriding an explicit one."""
-    response = await call_next(request)
-    for header, value in _SECURITY_HEADERS.items():
-        response.headers.setdefault(header, value)
-    return response
-
-
 def _deny(path: str, status: int, detail: str):
     """APIs get JSON, pages get sent to the login screen."""
     if path.startswith("/api/"):
@@ -156,6 +147,19 @@ async def require_login(request: Request, call_next):
         return JSONResponse(
             {"detail": f"role '{user.role}' is not allowed to do this"}, status_code=403)
     return await call_next(request)
+
+
+# Registered after require_login on purpose. Starlette wraps middleware in reverse
+# registration order, so the last one added is the outermost — which is what makes
+# these headers reach responses that require_login short-circuits (401/403), not
+# just the ones that get through to a route.
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Set security headers on every response, without overriding an explicit one."""
+    response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
 
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

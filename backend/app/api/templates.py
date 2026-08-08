@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.models.db import SessionLocal, RunTemplate, Project
+from app.models.db import SessionLocal, RunTemplate, Project, Schedule
 
 
 router = APIRouter(prefix="/api/projects/{project_id}/templates", tags=["templates"])
@@ -118,6 +118,16 @@ async def delete_template(project_id: str, template_id: int):
         t = await session.get(RunTemplate, template_id)
         if t is None or t.project_id != project_id:
             raise HTTPException(404, "template not found")
+        # A schedule holds a plain template_id, not a foreign key, so deleting the
+        # template leaves it pointing at nothing. It then fails at fire time, which
+        # nobody is watching — the schedule just stops running. Refuse and say which.
+        used_by = (await session.execute(
+            select(Schedule).where(Schedule.template_id == template_id)
+        )).scalars().all()
+        if used_by:
+            names = ", ".join(sorted(s.name for s in used_by))
+            raise HTTPException(
+                409, f"template is used by schedule(s): {names} — delete or repoint them first")
         await session.delete(t)
         await session.commit()
     return {"deleted": template_id}

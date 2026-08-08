@@ -3,6 +3,87 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.9.0] — 2026-08-08
+
+Release preparation. The documentation now describes the product as it is, and
+the API contract is stated rather than implied.
+
+### Added
+- **API stability statement** — `/api` paths and response fields won't change or
+  disappear within a major version from 1.0 onward; new optional fields and
+  endpoints can appear at any time, so parse tolerantly.
+- **`CONTRIBUTING.md`** — how to get a working checkout, what a change needs, and
+  the four things that bite people who don't know them yet: migrations are
+  append-only, new routes need a capability, the WebSocket authenticates itself,
+  and secrets never leave the API.
+- **Issue templates** for bugs and features, with a contact link routing security
+  reports to a private advisory instead of a public issue.
+
+### Changed
+- **README describes 0.8, not 0.0.7.** It still said "single-user local, no login"
+  as the only access model. It now documents the three modes, the roles, both
+  routes to a first administrator, login throttling and run isolation.
+
+### Notes
+No `/api/v1` prefix, deliberately. The API is consumed by this app's own frontend
+and by scripts people write against their own instance — it isn't published as a
+separate product, so a version segment would be ceremony without an audience. A
+genuinely breaking change would arrive as `/api/v2` alongside the existing paths,
+with `/api` kept working for at least one minor release after the CHANGELOG
+announces it.
+
+Publishing to Docker Hub needs `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` in the
+repository secrets. The release workflow refuses to publish when the tag,
+`__version__` and CHANGELOG disagree, and smoke-tests `/health` on the pushed
+image before creating the GitHub release. A prerelease tag (`v0.9.0-rc1`)
+publishes only its own tag and does not move `latest`, which is the cheap way to
+exercise the pipeline first.
+
+## [0.8.1] — 2026-08-08
+
+Tests for the layers that were thinnest. Three bugs found writing them.
+
+### Fixed
+- **A schedule could be registered twice, and would then run the playbook twice.**
+  `sync_schedule` relied on `add_job(replace_existing=True)`, which only dedupes
+  against the jobstore — and the jobstore doesn't exist until the scheduler
+  starts. Before that, jobs queue in `_pending_jobs` and a second add appends a
+  duplicate instead of replacing it. The lifespan happens to start the scheduler
+  before anything syncs, so this was latent; reordering those two lines in a
+  refactor would have made every schedule fire twice. `sync_schedule` now removes
+  before adding, so it is idempotent regardless of scheduler state.
+- **`PUT /api/schedules/{id}` accepted a project or template that doesn't exist**,
+  while `POST` refused them. A working schedule could be repointed at nothing,
+  and the only symptom would be it quietly not running.
+- **Security headers were missing from denied responses.** Starlette wraps
+  middleware in reverse registration order, so `require_login` was outside
+  `security_headers` and short-circuited 401/403 responses never reached it —
+  which made `SECURITY.md`'s "on every response" false. Registration order
+  swapped.
+
+### Changed
+- **Deleting a run template used by a schedule is now refused (409)** and names
+  the schedules. A schedule holds a plain `template_id`, not a foreign key, so
+  the delete used to leave it pointing at nothing; it then failed at fire time,
+  which nobody is watching.
+
+### Added
+- `tests/test_auth_middleware.py` — the auth and authorisation middleware
+  end-to-end through `TestClient`: all three modes, role enforcement per route,
+  session revocation on disable/delete/role-change, cookie tampering and
+  user-id substitution, security headers.
+- `tests/test_schedules_api.py`, `tests/test_templates_api.py` — full CRUD,
+  including cross-project access through the path and APScheduler staying in step
+  with the database.
+
+### Notes
+Coverage: `main.py` 50% → 77%, `api/schedules.py` 43% → 100%,
+`api/templates.py` 54% → 100%, total 75% → 78%. Suite is 737 tests, up from 664.
+
+The authorisation policy was already unit-tested against the route table, but
+that only proved the table was right — not that the middleware consults it. That
+gap is what these tests close.
+
 ## [0.8.0] — 2026-08-07
 
 Multi-user is enforced, not just modelled. Sign in as a named account, and the

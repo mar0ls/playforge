@@ -100,10 +100,45 @@ AI. Configure the AI helper under **Settings → AI helper** at runtime, or set
 `OLLAMA_URL` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in `.env`. State (projects,
 git repos, SQLite) lives under `./data` on the host and survives rebuilds.
 
+### Access control
+
+Three modes, decided by what exists — no flag to set:
+
+| Accounts | `ANSIBLE_GUI_PASSWORD` | Behaviour |
+|---|---|---|
+| yes | — | Sign in with a username; the role decides what you can do |
+| no | set | One shared password, full access |
+| no | unset | No login at all (single-user local) |
+
+Roles are **admin**, **operator** and **viewer**: viewer reads, operator also runs
+playbooks and edits files, admin also manages credentials, users and settings.
+Every API route declares the capability it needs, and an unmapped route denies
+everyone.
+
+Creating the first administrator, either way:
+
+```bash
+# automated deploys — set in .env or your orchestrator
+ANSIBLE_GUI_ADMIN_USER=admin
+ANSIBLE_GUI_ADMIN_PASSWORD=...        # or ANSIBLE_GUI_ADMIN_PASSWORD_FILE=/run/secrets/pw
+
+# or, with neither set, open /setup and paste the token from the log
+docker compose logs app | grep -A2 "Setup token"
+```
+
+The setup page needs that token because the port is published on `0.0.0.0`:
+without it, anyone who reached the port between `docker compose up` and your
+browser could claim the instance.
+
+Failed logins are throttled per client address — 5 attempts, then a lockout
+doubling from 30s to 15 minutes.
+
 ### Optional
 
-- **Password protection**: set `ANSIBLE_GUI_PASSWORD` to require login (signed
-  session cookie). Unset = single-user local, no login.
+- **Run isolation**: `ANSIBLE_GUI_RUN_ISOLATION=1` runs playbooks in a sandbox
+  that can't see `/data`, so a playbook can't read the credential vault or other
+  projects. Needs two `security_opt` lines in `docker-compose.yml` — see
+  [SECURITY.md](SECURITY.md) for the trade-off. Off by default.
 - **Import your projects**: bind-mount their directories read-only (see the
   commented `/import/*` examples in `docker-compose.yml`).
 - **Naming note**: the image and container are `playforge`; environment variables
@@ -217,7 +252,7 @@ make lab-regression
 The command exits non-zero when preflight fails or any run is not `ok`/
 `successful`.
 
-The test suite (370+ cases) runs in CI on every push and PR — see
+The test suite (730+ cases) runs in CI on every push and PR — see
 `.github/workflows/ci.yml`.
 
 ## Design notes
@@ -232,6 +267,22 @@ The test suite (370+ cases) runs in CI on every push and PR — see
 - **No heavy infra**: SQLite (WAL mode), in-process scheduler, direct runner.
   One container.
 - Third-party components are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+## API stability
+
+The HTTP API under `/api` is what the UI itself uses, and it's stable: from 1.0
+onward, paths and response fields won't change or disappear within a major
+version. New optional fields and new endpoints can be added at any time, so
+parse responses tolerantly.
+
+There is deliberately no `/api/v1` prefix. The API is consumed by this app's own
+frontend and by scripts people write against their own instance, not published as
+a separate product; a version segment would be ceremony without an audience. If a
+genuinely breaking change ever becomes necessary, it arrives as `/api/v2`
+alongside the existing paths, and `/api` keeps working for at least one minor
+release after it is announced in the CHANGELOG.
+
+`GET /openapi.json` and `/docs` describe the current surface.
 
 ## License
 

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mar0ls/playforge/security/advisories/new
+    about: Report privately through a security advisory, not a public issue.

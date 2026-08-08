@@ -155,17 +155,23 @@ def sync_schedule(schedule: Schedule) -> None:
     """
     s = get_scheduler()
     job_id = _job_id(schedule.id)
+    # Drop any existing registration first. `replace_existing=True` only dedupes
+    # against the jobstore, which doesn't exist until the scheduler starts —
+    # before that, jobs queue in `_pending_jobs` and a second add_job appends a
+    # duplicate rather than replacing. Two jobs with the same id means the
+    # playbook runs twice. Today the lifespan happens to start the scheduler
+    # before anything syncs, so this is latent; removing first makes it not
+    # depend on that ordering.
+    try:
+        s.remove_job(job_id)
+    except Exception:
+        pass
     if schedule.enabled:
         s.add_job(
             _fire, _build_trigger(schedule),
             args=[schedule.id], id=job_id, replace_existing=True,
             misfire_grace_time=300, coalesce=True, max_instances=1,
         )
-    else:
-        try:
-            s.remove_job(job_id)
-        except Exception:
-            pass
 
 
 def unsync_schedule(schedule_id: int) -> None:

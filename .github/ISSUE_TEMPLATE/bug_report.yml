@@ -1,0 +1,48 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `curl -s localhost:8765/health`
+      placeholder: '{"status":"ok","version":"0.9.0","schema_version":2,...}'
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >
+        `docker compose logs app`. Redact first — logs can contain host names and
+        inventory paths. Never paste a credential or a setup token.
+      render: text
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Access mode
+      options:
+        - Accounts (username + role)
+        - Shared password (ANSIBLE_GUI_PASSWORD)
+        - No login
+        - Not sure
+
+  - type: checkboxes
+    id: isolation
+    attributes:
+      label: Configuration
+      options:
+        - label: Run isolation is enabled (ANSIBLE_GUI_RUN_ISOLATION=1)
+        - label: Running behind a reverse proxy
+        - label: AI helper configured
