@@ -5,6 +5,39 @@ All notable changes to Playforge are documented here. The format loosely follows
 
 ## [0.9.0] — 2026-08-08
 
+Published to Docker Hub. `docker compose up -d` now pulls an image instead of
+building one.
+
+### Changed
+- **`docker-compose.yml` pulls `mar0ls/playforge`** instead of building from
+  source. It runs standalone — one file, no clone. Building still works through
+  the dev overlay, which is what `make build` now uses.
+- **The setup token is logged on one line.** Under `docker compose logs` every
+  line is prefixed with the service name, so the previous multi-line banner left
+  the operator picking a token out of decorated output. `grep "SETUP TOKEN"`
+  returns exactly one line; README and the setup page say so.
+
+### Added
+- **`DOCKERHUB.md`** — the Docker Hub page: tags, a copy-pasteable compose that
+  needs no clone, first sign-in, upgrading, and the environment table. The
+  release workflow syncs it, best-effort — a token without permission to edit the
+  description must not fail a release.
+
+### Notes
+Rehearsed with `v0.9.0-rc1` before tagging, which found two release bugs the real
+tag would have hit: the smoke test compared `/health` against the full tag so
+every prerelease failed against itself, and the GitHub Release wasn't flagged as
+a prerelease, so a candidate showed as the repository's current release.
+
+Verified against the published image, not a local build: pulled from Docker Hub
+on a machine with no sources, arm64 selected from the multi-arch manifest,
+container reports healthy, `/data` created on the host, setup token issued,
+first-admin flow completed, data surviving a restart with setup then closed. The
+compose embedded in `DOCKERHUB.md` was extracted from the Markdown and run
+verbatim.
+
+
+
 Release preparation. The documentation now describes the product as it is, and
 the API contract is stated rather than implied.
 

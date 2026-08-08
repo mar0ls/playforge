@@ -89,11 +89,16 @@ or a local **Ollama** server.
 git clone https://github.com/mar0ls/playforge.git
 cd playforge
 cp .env.example .env   # optional — for a password, AI keys, etc.
-docker compose up --build -d   # → http://127.0.0.1:8765
+docker compose up -d   # → http://127.0.0.1:8765
 ```
 
+This pulls the published image; nothing is built locally. `docker-compose.yml`
+also runs on its own if you'd rather not clone — see
+[DOCKERHUB.md](DOCKERHUB.md), which is the Docker Hub page.
+
 `curl -s localhost:8765/health` reports the running version and schema version.
-(Prebuilt images land on Docker Hub at 0.9; until then it builds from source.)
+Pin a version with `PLAYFORGE_VERSION=0.9.0` in `.env`; `latest` only ever moves
+to a stable release.
 
 The `.env` step is optional: with no `.env` the app runs single-user/local with no
 AI. Configure the AI helper under **Settings → AI helper** at runtime, or set
@@ -123,7 +128,7 @@ ANSIBLE_GUI_ADMIN_USER=admin
 ANSIBLE_GUI_ADMIN_PASSWORD=...        # or ANSIBLE_GUI_ADMIN_PASSWORD_FILE=/run/secrets/pw
 
 # or, with neither set, open /setup and paste the token from the log
-docker compose logs app | grep -A2 "Setup token"
+docker compose logs app | grep "SETUP TOKEN"
 ```
 
 The setup page needs that token because the port is published on `0.0.0.0`:

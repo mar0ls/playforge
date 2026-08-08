@@ -2,6 +2,12 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 services:
   app:
+    # The base file pulls the published image; adding `build` here is what makes
+    # `--build` compile this checkout instead.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: playforge:dev
     volumes:
       - ./backend/app:/app/app
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765", "--reload", "--reload-dir", "/app/app"]
