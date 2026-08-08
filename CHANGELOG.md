@@ -3,6 +3,42 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [0.9.0] — 2026-08-08
+
+Release preparation. The documentation now describes the product as it is, and
+the API contract is stated rather than implied.
+
+### Added
+- **API stability statement** — `/api` paths and response fields won't change or
+  disappear within a major version from 1.0 onward; new optional fields and
+  endpoints can appear at any time, so parse tolerantly.
+- **`CONTRIBUTING.md`** — how to get a working checkout, what a change needs, and
+  the four things that bite people who don't know them yet: migrations are
+  append-only, new routes need a capability, the WebSocket authenticates itself,
+  and secrets never leave the API.
+- **Issue templates** for bugs and features, with a contact link routing security
+  reports to a private advisory instead of a public issue.
+
+### Changed
+- **README describes 0.8, not 0.0.7.** It still said "single-user local, no login"
+  as the only access model. It now documents the three modes, the roles, both
+  routes to a first administrator, login throttling and run isolation.
+
+### Notes
+No `/api/v1` prefix, deliberately. The API is consumed by this app's own frontend
+and by scripts people write against their own instance — it isn't published as a
+separate product, so a version segment would be ceremony without an audience. A
+genuinely breaking change would arrive as `/api/v2` alongside the existing paths,
+with `/api` kept working for at least one minor release after the CHANGELOG
+announces it.
+
+Publishing to Docker Hub needs `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` in the
+repository secrets. The release workflow refuses to publish when the tag,
+`__version__` and CHANGELOG disagree, and smoke-tests `/health` on the pushed
+image before creating the GitHub release. A prerelease tag (`v0.9.0-rc1`)
+publishes only its own tag and does not move `latest`, which is the cheap way to
+exercise the pipeline first.
+
 ## [0.8.1] — 2026-08-08
 
 Tests for the layers that were thinnest. Three bugs found writing them.

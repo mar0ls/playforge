@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do, and where does the current version get in the
+        way? Describe the situation rather than the solution — it often has a
+        cheaper answer than the one that comes to mind first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you had in mind
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you work around it today
