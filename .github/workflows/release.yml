@@ -1,33 +1,19 @@
 name: Release
 
-# Publishes the multi-arch image to Docker Hub when a `v*` tag is pushed, so
-# users run `docker compose up -d` against a published image instead of building
-# from source.
+# Publishes the multi-arch image to Docker Hub on a `v*` tag.
 #
-# arm64 is not optional here: the primary dev machine is Apple Silicon, and
-# emulating amd64 for every local `docker compose up` is slow enough that people
-# would go back to building locally.
+# To release: bump `__version__`, add the CHANGELOG section, tag, push.
 #
-# Release flow:
-#   1. bump `__version__` in backend/app/__init__.py + add the CHANGELOG section
-#   2. git tag v0.1.0 && git push origin v0.1.0
+# Notes:
+#   arm64 is built because contributors run it; amd64-only would emulate.
+#   Tag/version/CHANGELOG agreement is checked here, not in CI — CI runs inside
+#   the image, which has no CHANGELOG.md.
+#   Tags are computed in shell rather than docker/metadata-action: that action
+#   reads github.ref, which on workflow_dispatch is the branch, not the tag.
 #
-# The tag/version/CHANGELOG agreement is enforced here, in the step below — not
-# by CI. The CI suite runs inside the image, where CHANGELOG.md isn't present, so
-# backend/tests/test_version.py skips that assertion there (it does check it when
-# run against a repo checkout, e.g. locally).
-#
-# Tags are computed in one shell step rather than via docker/metadata-action,
-# which derives the version by parsing `github.ref`. That is correct for tag
-# pushes and wrong for `workflow_dispatch`, where `github.ref` is the *branch*
-# the workflow was dispatched from, not the tag being released.
-#
-# Required repository secret (one):
-#   DOCKERHUB_TOKEN     Docker Hub access token with Read/Write (NOT the account password)
-#
-# The Docker Hub username lives in `env` below, not in secrets. `docker login`
-# needs it, but it isn't secret — it's already in the image name and the repo URL,
-# so storing it as a secret would protect nothing and add a setup step.
+# Secret: DOCKERHUB_TOKEN (access token with Read/Write, not the password).
+# The username is in `env` — it is public in the image name, so a secret would
+# protect nothing.
 
 "on":
   push:
@@ -55,8 +41,7 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
-      # The tag is the source of truth for what gets published, so a tag that
-      # disagrees with the code is a release bug — fail before anything is pushed.
+      # Fail before anything reaches Docker Hub.
       - name: Resolve version and image tags
         id: v
         env:
@@ -68,10 +53,8 @@ jobs:
             *) echo "::error::expected a v-prefixed tag, got '$RAW_TAG'"; exit 1 ;;
           esac
           version="${RAW_TAG#v}"
-          # A prerelease tag carries a suffix the source doesn't: v0.9.0-rc1 is a
-          # candidate for 0.9.0, so __version__ and the CHANGELOG are checked
-          # against the base. Without this, rehearsing a release would mean
-          # editing __version__ to "0.9.0-rc1" and back again.
+          # v0.9.0-rc1 is a candidate for 0.9.0: the suffix is on the tag, not in
+          # the source, so check __version__ and the CHANGELOG against the base.
           base="${version%%-*}"
 
           code="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' backend/app/__init__.py)"
@@ -84,12 +67,9 @@ jobs:
             exit 1
           fi
 
-          # A prerelease (0.1.0-rc1) publishes only its own exact tag; it must
-          # never move `latest` or the major.minor alias that users track.
-          # Braces are load-bearing: in some shells `$IMAGE:latest` parses as the
-          # modifier `:l` (lowercase) followed by "atest", which would publish
-          # `playforgeatest` instead of `latest` without failing. Actions runs bash,
-          # where it is fine, but this is too quiet a way to get it wrong.
+          # A prerelease publishes its own tag only — never `latest` or major.minor.
+          # Braces matter: in zsh `$IMAGE:latest` is the `:l` modifier plus "atest",
+          # which publishes `playforgeatest` without erroring. Actions runs bash.
           tags="${IMAGE}:${version}"
           case "$version" in
             *-*) echo "prerelease — publishing ${version} only" ;;
@@ -97,6 +77,7 @@ jobs:
           esac
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
           echo "Publishing: $tags"
 
@@ -126,15 +107,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # A published image that doesn't boot is worse than no release. Pull the
-      # freshly pushed image back and check /health actually answers, reports the
-      # version we just tagged, and has run its migrations.
+      # Pull the pushed image back and check it boots, reports the right version,
+      # and has run its migrations.
       - name: Smoke-test the published image
         env:
           VERSION: ${{ steps.v.outputs.version }}
+          # __version__ carries no prerelease suffix, so compare the base.
+          EXPECT_VERSION: ${{ steps.v.outputs.base }}
         run: |
           set -euo pipefail
-          docker run -d --name smoke -p 8765:8765 -e ANSIBLE_GUI_DATA_DIR=/data "$IMAGE:$VERSION"
+          docker run -d --name smoke -p 8765:8765 -e ANSIBLE_GUI_DATA_DIR=/data "${IMAGE}:${VERSION}"
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8765/health -o /tmp/health.json 2>/dev/null; then break; fi
             sleep 2
@@ -146,7 +128,7 @@ jobs:
           python3 - <<'PY'
           import json, os, sys
           h = json.load(open("/tmp/health.json"))
-          want = os.environ["VERSION"]
+          want = os.environ["EXPECT_VERSION"]
           if h.get("version") != want:
               sys.exit(f"::error::/health reports version {h.get('version')!r}, expected {want!r}")
           if h.get("status") != "ok":
