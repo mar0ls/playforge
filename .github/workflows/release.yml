@@ -97,6 +97,7 @@ jobs:
           esac
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
           echo "Publishing: $tags"
 
@@ -132,9 +133,13 @@ jobs:
       - name: Smoke-test the published image
         env:
           VERSION: ${{ steps.v.outputs.version }}
+          # What the app reports is __version__, which carries no prerelease
+          # suffix — v0.9.0-rc1 ships code that says 0.9.0. Compare against the
+          # base, not the tag, or every prerelease fails its own smoke test.
+          EXPECT_VERSION: ${{ steps.v.outputs.base }}
         run: |
           set -euo pipefail
-          docker run -d --name smoke -p 8765:8765 -e ANSIBLE_GUI_DATA_DIR=/data "$IMAGE:$VERSION"
+          docker run -d --name smoke -p 8765:8765 -e ANSIBLE_GUI_DATA_DIR=/data "${IMAGE}:${VERSION}"
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8765/health -o /tmp/health.json 2>/dev/null; then break; fi
             sleep 2
@@ -146,7 +151,7 @@ jobs:
           python3 - <<'PY'
           import json, os, sys
           h = json.load(open("/tmp/health.json"))
-          want = os.environ["VERSION"]
+          want = os.environ["EXPECT_VERSION"]
           if h.get("version") != want:
               sys.exit(f"::error::/health reports version {h.get('version')!r}, expected {want!r}")
           if h.get("status") != "ok":
