@@ -82,15 +82,13 @@ def issue_setup_token() -> str:
     """Mint the token for this process and log it where the operator can find it."""
     global _setup_token
     _setup_token = secrets.token_urlsafe(32)
+    # One line, self-describing, no surrounding box: under `docker compose logs`
+    # every line is prefixed with the service name, so a multi-line banner leaves
+    # the operator picking a token out of decorated output. `grep "SETUP TOKEN"`
+    # returns exactly this line.
     log.warning(
-        "\n"
-        "─────────────────────────────────────────────────────────────────\n"
-        " No accounts exist yet. Create the first administrator at:\n"
-        "     /setup\n"
-        " Setup token (required):\n"
-        "     %s\n"
-        " This token is only in this log and changes on every restart.\n"
-        "─────────────────────────────────────────────────────────────────",
+        "No accounts yet — create the first administrator at /setup. "
+        "SETUP TOKEN: %s (changes on every restart; only in this log)",
         _setup_token)
     return _setup_token
 

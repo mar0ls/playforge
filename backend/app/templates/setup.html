@@ -23,7 +23,7 @@
     <p class="text-sm muted hint">
       Paste the setup token from the container log. It stops anyone else who can
       reach this port from claiming the instance first.<br>
-      <code>docker compose logs app | grep -A2 "Setup token"</code>
+      <code>docker compose logs app | grep "SETUP TOKEN"</code>
     </p>
     <input type="text" name="token" placeholder="Setup token" autofocus
            autocapitalize="none" spellcheck="false" autocomplete="off">

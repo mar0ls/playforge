@@ -1,7 +1,9 @@
 .PHONY: build lock up down logs shell test test-fixture lab-regression backup restore clean
 
+# The base compose file pulls the published image, so building from source goes
+# through the dev overlay. Produces `playforge:dev`, the tag `make test` uses.
 build:
-	docker compose build
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
 # Regenerate backend/requirements.lock from requirements.txt. Runs in a linux
 # container so the resolution matches the image, not the dev machine.
@@ -11,6 +13,7 @@ lock:
 	  pip-compile --generate-hashes --quiet --output-file=requirements.lock requirements.txt"
 	@echo "Wrote backend/requirements.lock — rebuild with 'make build'."
 
+# Pulls mar0ls/playforge; pin with PLAYFORGE_VERSION in .env.
 up:
 	docker compose up -d
 	@echo "App: http://127.0.0.1:8765"
@@ -31,7 +34,7 @@ test:
 	  -v $(PWD)/backend/tests:/app/tests:ro \
 	  -v $(PWD)/backend/pytest.ini:/app/pytest.ini:ro \
 	  -v $(PWD)/backend/requirements-dev.txt:/app/requirements-dev.txt:ro \
-	  playforge:latest \
+	  playforge:dev \
 	  sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest"
 
 # Zip the example project so it can be imported via the UI.

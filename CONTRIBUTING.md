@@ -29,7 +29,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 - **A CHANGELOG entry** under a version heading. `tests/test_version.py` fails the
   build if `app.__version__` has no matching section.
 
-## Things worth knowing before you start
+## Before you start
 
 - **Migrations are append-only.** Add a `_mNNN_*` function to
   `app/models/migrations.py`, append it to `MIGRATIONS`, bump `SCHEMA_VERSION`.
