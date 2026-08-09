@@ -19,9 +19,11 @@ building one.
 
 ### Added
 - **`DOCKERHUB.md`** — the Docker Hub page: tags, a copy-pasteable compose that
-  needs no clone, first sign-in, upgrading, and the environment table. The
-  release workflow syncs it, best-effort — a token without permission to edit the
-  description must not fail a release.
+  needs no clone, first sign-in, upgrading, and the environment table. Pasted by
+  hand: the release tried to sync it and got `Forbidden`, because a Docker Hub
+  personal access token can't edit a repository description — that endpoint wants
+  the account password. The step was removed rather than left failing on every
+  release.
 
 ### Notes
 Rehearsed with `v0.9.0-rc1` before tagging, which found two release bugs the real
