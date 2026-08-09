@@ -1,3 +1,7 @@
+<!-- Docker Hub overview for mar0ls/playforge. Paste by hand under
+     Docker Hub > repository > Edit description. Automating it needs the
+     account password; a personal access token gets Forbidden. -->
+
 # Playforge
 
 A self-hosted web UI for managing and running Ansible — a simpler, friendlier AWX
