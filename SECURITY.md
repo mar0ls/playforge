@@ -90,6 +90,15 @@ Verified behaviour, not aspiration:
 | Rendered output | Model and file content is HTML-escaped before any Markdown formatting is re-introduced, so a prompt-injected reply can't inject script. |
 | Headers | CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer` on every response. |
 
+### No CSRF tokens
+
+State-changing requests are protected by `SameSite=Lax` on the session cookie,
+which stops a cross-site form or fetch from carrying it, and by `form-action
+'self'` in the CSP. There are no per-request CSRF tokens, so that cookie
+attribute is the whole defence — an older browser that ignores `SameSite`, or a
+same-site subdomain an attacker controls, would not be covered. Tokens are
+planned.
+
 ### CSP caveat
 
 `script-src` allows `'unsafe-inline'` and `'unsafe-eval'`. Every page template
