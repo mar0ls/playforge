@@ -3,6 +3,14 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [Unreleased]
+
+### Removed
+- **`DOCKERHUB.md`.** The overview is edited on Docker Hub itself now. The file
+  existed for a sync step that a personal access token can't perform, and a copy
+  in the repository that nothing publishes only drifts from the page it claims to
+  be. `git show v0.9.0:DOCKERHUB.md` still has the text.
+
 ## [0.9.0] — 2026-08-08
 
 Published to Docker Hub. `docker compose up -d` now pulls an image instead of

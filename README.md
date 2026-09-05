@@ -93,8 +93,8 @@ docker compose up -d   # → http://127.0.0.1:8765
 ```
 
 This pulls the published image; nothing is built locally. `docker-compose.yml`
-also runs on its own if you'd rather not clone — see
-[DOCKERHUB.md](DOCKERHUB.md), which is the Docker Hub page.
+also runs on its own if you'd rather not clone — download that one file and run
+`docker compose up -d` next to it.
 
 `curl -s localhost:8765/health` reports the running version and schema version.
 Pin a version with `PLAYFORGE_VERSION=0.9.0` in `.env`; `latest` only ever moves
