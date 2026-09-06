@@ -41,8 +41,8 @@ WORKDIR /app
 # two builds of the same git tag could otherwise ship different dependency versions.
 # --require-hashes also fails the build if a package doesn't match its recorded hash.
 # Regenerate after editing requirements.txt: make lock
-COPY requirements.txt requirements.lock ./
-RUN pip install --require-hashes -r requirements.lock
+COPY requirements.txt requirements-lock.txt ./
+RUN pip install --require-hashes -r requirements-lock.txt
 
 # Bake popular Ansible collections into a system-wide path so `ansible-doc` (and
 # thus the assistant's RAG/anti-hallucination layer) knows the modules people

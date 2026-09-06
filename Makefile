@@ -5,13 +5,13 @@
 build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
-# Regenerate backend/requirements.lock from requirements.txt. Runs in a linux
+# Regenerate backend/requirements-lock.txt from requirements.txt. Runs in a linux
 # container so the resolution matches the image, not the dev machine.
 lock:
 	docker run --rm -v $(PWD)/backend:/w -w /w python:3.12-slim sh -c "\
 	  pip install -q pip-tools && \
-	  pip-compile --generate-hashes --quiet --output-file=requirements.lock requirements.txt"
-	@echo "Wrote backend/requirements.lock — rebuild with 'make build'."
+	  pip-compile --generate-hashes --quiet --output-file=requirements-lock.txt requirements.txt"
+	@echo "Wrote backend/requirements-lock.txt — rebuild with 'make build'."
 
 # Pulls mar0ls/playforge; pin with PLAYFORGE_VERSION in .env.
 up:

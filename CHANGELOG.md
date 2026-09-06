@@ -3,6 +3,43 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [Unreleased]
+
+### Changed
+- **`backend/requirements.lock` is now `backend/requirements-lock.txt`.** GitHub's
+  dependency graph was reading `requirements.txt` and not the lock, so Dependabot
+  alerts covered 21 floor-pinned packages while the image installs 73 exact ones.
+  Measured, not assumed: `fastapi` and `ansible-core` appear in the repository's
+  SBOM, `anyio` and `attrs` — which exist only in the lock — do not, and none of
+  the 25 Python entries carried a version at all, because `>=` pins have none to
+  record. The rename is the cheap experiment: `requirements*.txt` is the pattern
+  the graph recognises. Whether that is the actual cause will be visible in the
+  SBOM after this lands; if the transitive packages still do not appear, the
+  answer is submitting them from CI instead. Contents and hashes are untouched —
+  the file was moved, not regenerated.
+
+- **cicd-sensor now runs in every job, including the release.** It was in `test`
+  and `types` only. `syntax` is cheap to cover, and `publish` is the job that
+  holds `DOCKERHUB_TOKEN` and `contents: write` and produces the image users
+  pull — the one most worth watching was the one not watched. Coverage there is
+  partial by nature: the sensor observes the runner, not the buildkit containers
+  the image is built inside.
+
+### Added
+- **`.github/dependabot.yml` for GitHub Actions.** Every action is pinned by
+  commit SHA, which is correct and also means none of them can move on their own;
+  the 1.0.0 release warned that six still target the Node 20 runtime. Monthly and
+  grouped into one pull request, because a bot a solo maintainer starts ignoring
+  is worse than no bot. pip is deliberately excluded: a hash-pinned lock
+  regenerated through `make lock` is not something to hand to a bot, and alerts
+  cover those packages regardless.
+
+- **cicd-sensor bumped to v0.0.38** (agent v0.0.43 -> v0.0.45). v0.0.38 extends
+  the agent's shutdown window so buffered logs are flushed before the runner VM
+  is destroyed; without it short jobs lose their sensor output silently, and
+  `syntax` and `types` both finish in about two minutes. Pinned by commit SHA as
+  before, which also fixes the bundled agent version.
+
 ## [1.0.0] — 2026-09-06
 
 Cross-site requests are refused, the `/api` surface is pinned by a snapshot the

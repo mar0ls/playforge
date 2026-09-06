@@ -7,7 +7,7 @@ body:
     attributes:
       label: Version
       description: Output of `curl -s localhost:8765/health`
-      placeholder: '{"status":"ok","version":"0.9.0","schema_version":2,...}'
+      placeholder: '{"status":"ok","version":"1.0.0","schema_version":2,...}'
     validations:
       required: true
 

@@ -10,7 +10,7 @@ make test           # runs the suite inside it
 ```
 
 Run the suite **in the image**, not only in a local venv. The image pins
-dependencies from `backend/requirements.lock`; a local venv drifts, and the two
+dependencies from `backend/requirements-lock.txt`; a local venv drifts, and the two
 have already disagreed in ways that mattered — a FastAPI version difference once
 made a test pass while asserting nothing. `make test` is what CI runs.
 

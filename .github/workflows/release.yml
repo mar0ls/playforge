@@ -36,6 +36,13 @@ jobs:
       contents: write  # for the GitHub Release
 
     steps:
+      # First step on purpose: this is the only job holding DOCKERHUB_TOKEN and
+      # contents:write, and the only one whose output users pull. The sensor
+      # observes the runner, not the buildkit containers the image is built in,
+      # so coverage here is partial — the steps that resolve dependencies and
+      # handle the token are what it watches.
+      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
