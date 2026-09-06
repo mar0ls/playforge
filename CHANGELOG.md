@@ -19,15 +19,23 @@ All notable changes to Playforge are documented here. The format loosely follows
   known-modules set and the chat reply cache. A stale one is what makes a
   freshly installed collection still read as "doesn't exist".
 
-  `app/api/projects.py` goes 42% -> 63%; the total 77.83% -> 80.33%.
+  A third pair covers the rest of the module's surface:
+  `tests/test_projects_api_vault.py` (16 cases) runs the real `ansible-vault`
+  through encrypt/decrypt/view — a stub there would only prove the stub was
+  called — and pins that a wrong password leaves the file intact and that `view`
+  never rewrites it. `tests/test_projects_api_import.py` (14 cases) covers
+  import-path and import-zip, including the guard that rejects a zip entry
+  climbing out of the extraction directory.
+
+  `app/api/projects.py` goes 42% -> 77%; the total 77.83% -> 81.99%.
 
 ### Changed
 - **CI enforces a coverage floor.** `--cov-fail-under` in the test job, plus a
   `make coverage` target that runs the same gate locally. Coverage was already
   measured and uploaded to Codecov, but nothing failed a build when it fell — a
   number nobody defends drifts down. The floor is a ratchet: raise it as tests
-  land, never lower it to go green. Currently 80, just under the real total
-  (80.33%), because coverage.py compares the unrounded figure.
+  land, never lower it to go green. Currently 81, just under the real total
+  (81.99%), because coverage.py compares the unrounded figure.
 
 ### Removed
 - **`DOCKERHUB.md`.** The overview is edited on Docker Hub itself now. The file
