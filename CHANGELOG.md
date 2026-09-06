@@ -5,20 +5,19 @@ All notable changes to Playforge are documented here. The format loosely follows
 
 ## [1.0.0] — 2026-09-06
 
-The version where the promises start binding. No new features: what changed is
-that the API surface, the cross-site posture and the support policy are now
-things a user can hold the project to, and each one is enforced by something that
-fails a build rather than by a sentence in a document.
+Cross-site requests are refused, the `/api` surface is pinned by a snapshot the
+suite checks, and the support policy says what happens after this tag. No new
+features: the things README already claimed are now checked by the build.
 
 
 ### Security
-- **The zip import's traversal guard actually contains.** It compared paths as
-  strings, and `extracted_evil` starts with `extracted`, so a sibling-named entry
+- **The zip import's traversal guard compares paths, not prefixes.** It matched as
+  text, and `extracted_evil` starts with `extracted`, so a sibling-named entry
   passed a check meant to keep members inside the extraction directory. Nothing
   escaped: `zipfile` strips `..` from member names itself, which is what made the
   weakness invisible. A guard that holds only because of the thing it guards
   stops holding the day that thing changes, so it now uses `is_relative_to`. The
-  test fails against the old comparison, which is how it earns its place.
+  test fails against the old comparison.
 
 - **CSRF protection, in all three auth modes.** Two layers, both ahead of
   authentication.
@@ -87,7 +86,8 @@ fails a build rather than by a sentence in a document.
   import-path and import-zip, including the guard that rejects a zip entry
   climbing out of the extraction directory.
 
-  `app/api/projects.py` goes 42% -> 77%; the total 77.83% -> 81.99%.
+  `app/api/projects.py` goes 42% -> 77%; the total 77.83% -> 82.35% over the
+  release, 736 -> 844 cases.
 
 ### Changed
 - **Supported-versions policy stated for 1.0.** Fixes go to the newest release as
@@ -99,8 +99,8 @@ fails a build rather than by a sentence in a document.
   `make coverage` target that runs the same gate locally. Coverage was already
   measured and uploaded to Codecov, but nothing failed a build when it fell — a
   number nobody defends drifts down. The floor is a ratchet: raise it as tests
-  land, never lower it to go green. Currently 81, just under the real total
-  (81.99%), because coverage.py compares the unrounded figure.
+  land, never lower it to go green. Currently 82, just under the real total
+  (82.35%), because coverage.py compares the unrounded figure.
 
 ### Removed
 - **`DOCKERHUB.md`.** The overview is edited on Docker Hub itself now. The file

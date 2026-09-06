@@ -52,7 +52,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 - **The WebSocket guards itself.** HTTP middleware doesn't cover WS scope, so a
   socket has to repeat all of it: the origin, the session and the role, in the
   handler. A handshake cannot carry a CSRF token — `new WebSocket()` sets no
-  headers — so `Origin` is the only thing there is to judge it on.
+  headers — so `Origin` is all there is to judge it on.
 - **Secrets never leave the API.** Credential material is read from disk at run
   time and written to 0600 files in a per-run temp dir. No endpoint returns one.
 

@@ -225,10 +225,9 @@ async def test_a_sibling_named_entry_is_rejected():
     """`extracted_evil` starts with `extracted`.
 
     A string-prefix guard accepts this member: as text the resolved path begins
-    with the extraction directory, while sitting outside it. Nothing ever
-    escaped, because zipfile strips `..` from member names on its own — but a
-    check that holds only because of the thing it is checking is not a check.
-    This pins containment, not the accident.
+    with the extraction directory while sitting outside it. Nothing ever escaped,
+    because zipfile strips `..` from member names on its own — so the guard was
+    never what kept it in. This asserts containment rather than that accident.
     """
     data = _zip_bytes({"../extracted_evil/f.txt": "pwned"})
     with pytest.raises(HTTPException) as exc:
