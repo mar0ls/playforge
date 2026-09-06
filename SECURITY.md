@@ -107,10 +107,10 @@ A request carrying neither header is allowed. `curl`, scripts and
 the browser attaches it to every cross-origin request — so absence means no
 browser was tricked into sending it.
 
-This runs in all three auth modes, and the default one is why. With no accounts
-and no `ANSIBLE_GUI_PASSWORD` there is no session cookie, so there was nothing
-for `SameSite` to withhold: an instance on `127.0.0.1` could be driven by any
-page open in the same browser. JSON endpoints were shielded by the browser's own
+This runs in all three auth modes, and the default one is the reason it has to.
+With no accounts and no `ANSIBLE_GUI_PASSWORD` there is no session cookie, so
+`SameSite` had nothing to withhold, and an instance on `127.0.0.1` could be
+driven by any page open in the same browser. JSON endpoints were shielded by the browser's own
 CORS preflight, but `multipart/form-data` needs no preflight, and
 `POST /api/projects/import-zip` accepts it. `tests/test_csrf.py` reproduces the
 request that used to succeed and now asserts it is refused.

@@ -207,11 +207,10 @@ async def csrf_protect(request: Request, call_next):
     `SameSite`: such a browser sends the cookie cross-site, and the attacker
     still cannot produce the token for it.
 
-    A request without the cookie is left to the Origin layer. That is not a hole
-    to plug but the only coherent rule: with `SameSite=Lax` a forged cross-site
-    POST arrives with no cookies at all, so demanding a token would reject curl,
-    scripts and `make lab-regression` without inconveniencing an attacker for a
-    moment.
+    A request without the cookie is left to the Origin layer. Under `SameSite=Lax`
+    a forged cross-site POST arrives with no cookies either, so demanding a token
+    from cookie-less requests would reject curl, scripts and `make lab-regression`
+    without stopping an attacker.
 
     Reads are never checked. A cross-site GET cannot read the response.
     """

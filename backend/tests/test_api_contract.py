@@ -27,9 +27,9 @@ the same change, so the diff shows the contract moving:
 
     make api-contract
 
-A regenerated snapshot in a diff is the signal to ask whether callers were
-considered — that is the whole point of it being a file rather than a runtime
-check.
+It lives in a file rather than being computed at runtime so that a change to the
+surface shows up in review, where someone can ask whether callers were
+considered.
 """
 from __future__ import annotations
 

@@ -138,11 +138,11 @@ browser could claim the instance.
 Failed logins are throttled per client address — 5 attempts, then a lockout
 doubling from 30s to 15 minutes.
 
-**Writing a script against your instance?** State-changing requests are checked
-for cross-site origin, and browsers additionally have to send a CSRF token. A
-client that never loads a page — `curl`, your script, `make lab-regression` —
-sends no `Origin` and picks up no cookie, so it is unaffected and needs no token.
-See [SECURITY.md](SECURITY.md) for why that is safe rather than a loophole.
+State-changing requests are checked for cross-site origin, and a browser must
+also send a CSRF token. A client that never loads a page — `curl`, a script,
+`make lab-regression` — sends no `Origin` and picks up no cookie, so it needs no
+token and is unaffected. [SECURITY.md](SECURITY.md) explains why that is the
+coherent rule rather than a way around the check.
 
 ### Optional
 
@@ -182,7 +182,7 @@ against a newer database logs a warning rather than half-working. To go back:
 
 ```bash
 docker compose down
-scripts/restore.sh backups/playforge-backup-0.1.0-<stamp>.tar.gz
+scripts/restore.sh backups/playforge-backup-1.0.0-<stamp>.tar.gz
 ```
 
 `restore.sh` won't overwrite a populated `./data` without `--force`, and moves the
