@@ -26,6 +26,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
   see the existing files in `backend/tests/` for the pattern.
 - **`make test` green in the image**, and `python -m mypy app --config-file mypy.ini`
   clean.
+- **Coverage that doesn't go backwards.** `make coverage` runs the same gate CI
+  does (`--cov-fail-under`); a change that drops the total below the floor fails
+  the build. The floor is a ratchet — raise it when the number rises, never lower
+  it to go green.
 - **A CHANGELOG entry** under a version heading. `tests/test_version.py` fails the
   build if `app.__version__` has no matching section.
 

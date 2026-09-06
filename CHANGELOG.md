@@ -5,6 +5,14 @@ All notable changes to Playforge are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **CI enforces a coverage floor.** `--cov-fail-under=77` in the test job, plus a
+  `make coverage` target that runs the same gate locally. Coverage was already
+  measured and uploaded to Codecov, but nothing failed a build when it fell — a
+  number nobody defends drifts down. The floor is a ratchet: raise it as tests
+  land, never lower it to go green. It sits just below the real total (77.83%)
+  because coverage.py compares the unrounded figure.
+
 ### Removed
 - **`DOCKERHUB.md`.** The overview is edited on Docker Hub itself now. The file
   existed for a sync step that a personal access token can't perform, and a copy
