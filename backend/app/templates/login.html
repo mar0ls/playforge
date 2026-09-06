@@ -17,6 +17,7 @@
 </head>
 <body>
   <form class="login-card" method="post" action="/login">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
     <h1>✨ Playforge</h1>
     {% if multi_user %}
     <p class="text-sm muted">Sign in with your account.</p>

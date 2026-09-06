@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 from datetime import datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -645,6 +646,16 @@ async def run_ws(ws: WebSocket):
     that guards `POST /api/runs` simply by using the socket instead.
     """
     from app.core import users as users_core
+
+    # The HTTP middleware never sees this scope, so the cross-site check has to
+    # be repeated here. A token is not an option: `new WebSocket()` cannot set a
+    # header, so Origin is the only thing a handshake can be judged on. Without
+    # it a hostile page could open a socket and run playbooks with the stored
+    # credentials — the same attack the middleware refuses over HTTP.
+    origin = ws.headers.get("origin")
+    if origin is not None and urlparse(origin).netloc != (ws.headers.get("host") or ""):
+        await ws.close(code=4403)
+        return
 
     actor_id: int | None = None
     if await users_core.multi_user_enabled():

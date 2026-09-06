@@ -45,7 +45,7 @@ coverage:
 	  -v $(PWD)/backend/pytest.ini:/app/pytest.ini:ro \
 	  -v $(PWD)/backend/requirements-dev.txt:/app/requirements-dev.txt:ro \
 	  playforge:dev \
-	  sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=81"
+	  sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=82"
 
 # Zip the example project so it can be imported via the UI.
 test-fixture:

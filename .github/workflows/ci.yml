@@ -33,7 +33,7 @@ jobs:
       # --cov-fail-under is the floor, not the goal: it exists so coverage can't
       # drift down unnoticed between releases. Raise it when the real number
       # rises; never lower it to make a build green. It sits just under the
-      # actual total (81.99%) rather than at it — coverage.py compares
+      # actual total (82.35%) rather than at it — coverage.py compares
       # the unrounded figure, so a floor equal to the rounded number fails.
       - name: Run test suite in image
         run: |
@@ -45,7 +45,7 @@ jobs:
             -v "$PWD/backend/requirements-dev.txt:/app/requirements-dev.txt:ro" \
             -v "$PWD/coverage:/workspace" \
             playforge:dev \
-            sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=xml:/workspace/coverage.xml --cov-fail-under=81 -p no:cacheprovider --color=yes"
+            sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=xml:/workspace/coverage.xml --cov-fail-under=82 -p no:cacheprovider --color=yes"
 
       - name: Verify coverage report
         run: ls -lh coverage/coverage.xml

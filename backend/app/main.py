@@ -3,6 +3,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -11,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import __version__
 from app.core import auth
+from app.core import csrf
 
 from app.api import projects as projects_api
 from app.api import runs as runs_api
@@ -149,6 +151,97 @@ async def require_login(request: Request, call_next):
     return await call_next(request)
 
 
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _is_cross_site(request: Request) -> bool:
+    """Decide whether a state-changing request came from somewhere else.
+
+    Two signals, in order of trustworthiness:
+
+    `Sec-Fetch-Site` is the browser's own verdict and needs no guessing about
+    scheme or proxies. `same-site` is rejected along with `cross-site`: a
+    subdomain an attacker controls is precisely the case `SameSite=Lax` never
+    covered. `none` means the user typed the URL or opened a bookmark.
+
+    Falling back to `Origin` compares host and port only, not scheme. Uvicorn
+    runs without `--proxy-headers`, so behind TLS termination it sees `http`
+    while the browser reports `https`; comparing schemes would reject every
+    request on a deployment that followed our own advice to put TLS in front.
+
+    A request with neither header is allowed. curl, scripts and the
+    lab-regression target send no Origin, and a hostile page cannot suppress it
+    — the browser attaches it to every cross-origin request. Absent therefore
+    means "no browser was tricked into this", which is not the threat here.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site not in ("same-origin", "none")
+
+    origin = request.headers.get("origin")
+    if origin is None:
+        return False
+    host = request.headers.get("host") or ""
+    return urlparse(origin).netloc != host
+
+
+# The three real HTML form posts. They cannot set a header, so they carry the
+# token in a body field and each route checks it itself; the middleware would
+# have to consume the request body to see it.
+_FORM_POST_PATHS = frozenset({"/login", "/setup", "/logout"})
+
+
+@app.middleware("http")
+async def csrf_protect(request: Request, call_next):
+    """Two layers, in every auth mode.
+
+    **Origin.** A state-changing request must not have been set in motion by
+    another site. This needs no cookie, which is why it also covers the default
+    mode: with no accounts and no password there is no session cookie, so
+    `SameSite` has nothing to withhold, and an instance on 127.0.0.1 is reachable
+    from any page open in the same browser — `multipart/form-data` gets there
+    without a CORS preflight.
+
+    **Token.** When the request carries our CSRF cookie it must also present the
+    matching signed token. This is the layer that survives a browser ignoring
+    `SameSite`: such a browser sends the cookie cross-site, and the attacker
+    still cannot produce the token for it.
+
+    A request without the cookie is left to the Origin layer. That is not a hole
+    to plug but the only coherent rule: with `SameSite=Lax` a forged cross-site
+    POST arrives with no cookies at all, so demanding a token would reject curl,
+    scripts and `make lab-regression` without inconveniencing an attacker for a
+    moment.
+
+    Reads are never checked. A cross-site GET cannot read the response.
+    """
+    nonce = request.cookies.get(csrf.COOKIE) or ""
+    issued = not nonce
+    if issued:
+        nonce = csrf.new_nonce()
+    # Templates render this into a meta tag; the page script sends it back.
+    request.state.csrf_token = csrf.token_for(nonce)
+
+    if request.method in _UNSAFE_METHODS:
+        if _is_cross_site(request):
+            return JSONResponse({"detail": "cross-site request refused"}, status_code=403)
+        if not issued and request.url.path not in _FORM_POST_PATHS:
+            if not csrf.verify(nonce, request.headers.get(csrf.HEADER)):
+                return JSONResponse({"detail": "missing or invalid CSRF token"},
+                                    status_code=403)
+
+    response = await call_next(request)
+    # Only pages get the cookie. It exists to pair with a token rendered into the
+    # HTML, so handing one to an API client would arm a check it has no way to
+    # satisfy: a script would succeed once, pick up the cookie, and be refused
+    # from its second write onwards.
+    if issued and response.headers.get("content-type", "").startswith("text/html"):
+        response.set_cookie(csrf.COOKIE, nonce, max_age=7 * 24 * 3600, httponly=True,
+                            samesite="lax", secure=request.url.scheme == "https",
+                            path="/")
+    return response
+
+
 # Registered after require_login on purpose. Starlette wraps middleware in reverse
 # registration order, so the last one added is the outermost — which is what makes
 # these headers reach responses that require_login short-circuits (401/403), not
@@ -214,6 +307,20 @@ async def health():
     return payload
 
 
+def _form_token_ok(request: Request, csrf_token: str) -> bool:
+    """The middleware's rule, applied to the three posts that carry the token in
+    the body: enforce only when the browser actually sent our cookie.
+
+    A client that never loaded a page has no cookie — curl, a script, the
+    lab-regression target. Demanding a token from those would refuse legitimate
+    automation while inconveniencing no attacker: under `SameSite=Lax` a forged
+    cross-site post arrives cookie-less too, and the Origin layer is what stops
+    it.
+    """
+    nonce = request.cookies.get(csrf.COOKIE)
+    return nonce is None or csrf.verify(nonce, csrf_token)
+
+
 def _set_session(resp, request: Request, user_id: int | None = None):
     secure = request.url.scheme == "https"
     resp.set_cookie(auth.SESSION_COOKIE, auth.issue_token(user_id), max_age=7 * 24 * 3600,
@@ -241,12 +348,23 @@ def _client_ip(request: Request) -> str:
 
 
 @app.post("/login")
-async def login_submit(request: Request, username: str = Form(""), password: str = Form("")):
+async def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
+                       csrf_token: str = Form("")):
     from app.core import users as users_core
 
     multi_user = await users_core.multi_user_enabled()
     if not multi_user and not auth.auth_enabled():
         return RedirectResponse(url="/", status_code=303)
+
+    # A form post can't carry a header, so the token comes from the body and is
+    # checked here rather than in the middleware. A stale tab lands here too, so
+    # it is re-rendered with an explanation instead of a bare 403.
+    if not _form_token_ok(request, csrf_token):
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"error": "This page expired. Reload and sign in again.",
+             "multi_user": multi_user},
+            status_code=403)
 
     # Throttling comes first in both modes: a locked-out client shouldn't get its
     # password checked, and shouldn't learn whether a username exists either.
@@ -295,7 +413,7 @@ async def setup_page(request: Request, error: str = ""):
 
 @app.post("/setup")
 async def setup_submit(request: Request, token: str = Form(""), username: str = Form(""),
-                       password: str = Form("")):
+                       password: str = Form(""), csrf_token: str = Form("")):
     """Create the first administrator.
 
     Requires the token printed to the container log. Without it, publishing the
@@ -306,6 +424,11 @@ async def setup_submit(request: Request, token: str = Form(""), username: str = 
 
     if bootstrap.setup_token() is None:
         return RedirectResponse(url="/", status_code=303)
+
+    if not _form_token_ok(request, csrf_token):
+        return templates.TemplateResponse(
+            request, "setup.html",
+            {"error": "This page expired. Reload and try again."}, status_code=403)
 
     # Throttled like /login: the token is the only thing standing here, so it
     # must not be guessable at speed.
@@ -337,7 +460,9 @@ async def setup_submit(request: Request, token: str = Form(""), username: str = 
 
 
 @app.post("/logout")
-async def logout(request: Request):
+async def logout(request: Request, csrf_token: str = Form("")):
+    if not _form_token_ok(request, csrf_token):
+        return JSONResponse({"detail": "missing or invalid CSRF token"}, status_code=403)
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie(auth.SESSION_COOKIE)
     return resp

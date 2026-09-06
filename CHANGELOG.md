@@ -5,6 +5,37 @@ All notable changes to Playforge are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Security
+- **CSRF protection, in all three auth modes.** Two layers, both ahead of
+  authentication.
+
+  *Origin.* A state-changing request must not have been set in motion by another
+  site: `Sec-Fetch-Site` when the browser sends it (refusing `same-site` as well
+  as `cross-site`, so a subdomain is covered), otherwise `Origin` against `Host`,
+  compared on host and port — uvicorn runs without `--proxy-headers`, so
+  comparing schemes would refuse every request behind TLS termination.
+
+  *Token.* Pages carry a token that is an HMAC of a nonce held in a cookie, so
+  planting a cookie is not enough; a plain double-submit echo is refused. One
+  wrapper around `fetch` in `base.html` covers every call site; the three real
+  form posts carry it in a body field. The token is demanded only when the
+  request carries the cookie, which is issued only with an HTML page — curl and
+  scripts stay cookie-less and are governed by the Origin layer, as a forged
+  request is too.
+
+  The run WebSocket now checks `Origin` in its handshake. HTTP middleware never
+  sees that scope and a handshake cannot set a header, so without it a hostile
+  page could open a socket and run playbooks with the stored credentials.
+
+  This matters most in the mode README calls the default. With no accounts and no
+  `ANSIBLE_GUI_PASSWORD` there is no session cookie, so `SameSite` had nothing to
+  withhold and an instance on `127.0.0.1` could be driven by any page open in the
+  same browser: `multipart/form-data` reaches it without a CORS preflight, and
+  `POST /api/projects/import-zip` accepts multipart. `tests/test_csrf.py` was
+  written against the old behaviour first and recorded that forged upload
+  succeeding with 200; it now asserts the 403, confirmed against a running
+  container as well as in the suite.
+
 ### Added
 - **API-layer tests for `projects.py`**, the least covered module in the tree —
   `tests/test_projects_api_editing.py` (24 cases: settings, `detected`,

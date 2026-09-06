@@ -117,8 +117,16 @@ def test_wrong_password_does_not_create_a_session(app_client):
 
 
 def test_unknown_username_gives_the_same_answer_as_a_wrong_password(app_client):
-    """The message must not reveal which accounts exist."""
+    """The message must not reveal which accounts exist.
+
+    Both attempts start from the same state on purpose. A failed login
+    re-renders the page, and an HTML response issues a CSRF cookie, so without
+    the reset the second post would arrive holding a cookie the first one never
+    had and be refused for that instead — comparing two different situations
+    and proving nothing about enumeration.
+    """
     a = app_client.post("/login", data={"username": "boss", "password": "wrong"})
+    app_client.cookies.clear()
     b = app_client.post("/login", data={"username": "ghost", "password": "wrong"})
     assert a.status_code == b.status_code == 401
     assert "Wrong username or password" in a.text
