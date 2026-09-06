@@ -276,7 +276,7 @@ floor CI enforces (`make coverage` runs the same gate locally) — see
   served from the image, popular Galaxy collections are baked in for `ansible-doc`,
   and AI can run against a local Ollama. Online docs lookup is off by default and
   is the only thing that reaches the internet when you turn it on.
-- **Reproducible builds**: Python deps install from `backend/requirements.lock`
+- **Reproducible builds**: Python deps install from `backend/requirements-lock.txt`
   with `--require-hashes`; Monaco is fetched at build time against a pinned
   SHA-256. The same git tag produces the same image.
 - **No heavy infra**: SQLite (WAL mode), in-process scheduler, direct runner.

@@ -61,6 +61,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5

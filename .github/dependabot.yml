@@ -1,0 +1,31 @@
+# Version updates for GitHub Actions only.
+#
+# Every action in this repository is pinned by commit SHA, which is the right
+# way to depend on one and also means none of them can ever move on its own. The
+# v1.0.0 release warned that six were still targeting the Node 20 runtime, which
+# is exactly the drift a SHA pin creates: nothing is wrong until suddenly the
+# runner stops supporting it. Dependabot rewrites the SHA and the version comment
+# together, which is the part that is tedious to do by hand.
+#
+# pip is deliberately absent. The image installs from `backend/requirements-lock.txt`
+# with `--require-hashes`, regenerated deliberately through `make lock`, and a bot
+# editing a hash-pinned file is more likely to produce a broken build than a
+# useful one. Dependabot *alerts* still cover those packages; this file is only
+# about scheduled version bumps.
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      # Monthly, not weekly: action releases are rarely urgent, and a PR nobody
+      # reads is worse than no PR. Security fixes arrive through alerts anyway.
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      # One PR for all of them. Six separate SHA bumps to review individually is
+      # how a solo maintainer starts ignoring the bot.
+      actions:
+        patterns:
+          - "*"
