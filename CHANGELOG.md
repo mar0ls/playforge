@@ -3,6 +3,15 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [Unreleased]
+
+### Changed
+- **cicd-sensor bumped to v0.0.38** (agent v0.0.43 -> v0.0.45). v0.0.38 extends
+  the agent's shutdown window so buffered logs are flushed before the runner VM
+  is destroyed; without it short jobs lose their sensor output silently, and
+  `syntax` and `types` both finish in about two minutes. Pinned by commit SHA as
+  before, which also fixes the bundled agent version.
+
 ## [1.0.0] — 2026-09-06
 
 Cross-site requests are refused, the `/api` surface is pinned by a snapshot the
