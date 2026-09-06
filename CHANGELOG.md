@@ -3,7 +3,13 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
-## [Unreleased]
+## [1.0.0] — 2026-09-06
+
+The version where the promises start binding. No new features: what changed is
+that the API surface, the cross-site posture and the support policy are now
+things a user can hold the project to, and each one is enforced by something that
+fails a build rather than by a sentence in a document.
+
 
 ### Security
 - **The zip import's traversal guard actually contains.** It compared paths as

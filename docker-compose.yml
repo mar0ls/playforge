@@ -1,7 +1,7 @@
 services:
   app:
     # Published multi-arch image (amd64 + arm64). Pin a version in .env for
-    # reproducible upgrades: PLAYFORGE_VERSION=0.9.0. `latest` only ever moves to
+    # reproducible upgrades: PLAYFORGE_VERSION=1.0.0. `latest` only ever moves to
     # a stable release, never a prerelease.
     # To build from source instead:
     #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build

@@ -640,10 +640,13 @@ async def adhoc(payload: AdhocIn):
 async def run_ws(ws: WebSocket):
     """Client sends a RunIn JSON, receives events; `{"action":"cancel"}` aborts.
 
-    HTTP middleware doesn't cover WS scope, so both the session *and* the role are
-    re-checked here — otherwise a LAN attacker could open a WS and run any playbook
-    with the configured credentials, and a viewer could bypass the capability check
-    that guards `POST /api/runs` simply by using the socket instead.
+    HTTP middleware doesn't cover WS scope, so everything it would have done is
+    repeated here: the request's origin, the session *and* the role. Without the
+    session check a LAN attacker could open a WS and run any playbook with the
+    configured credentials; without the role check a viewer could bypass the
+    capability guarding `POST /api/runs` by using the socket instead; without the
+    origin check a hostile page could do the same from a browser the operator
+    already had open.
     """
     from app.core import users as users_core
 

@@ -49,8 +49,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 - **New API routes need a capability.** `app/core/authz.py` maps every route to
   one; a route with no entry denies everyone, and `tests/test_authz.py` enumerates
   the real route table so an unmapped route fails the build rather than shipping.
-- **The WebSocket authenticates itself.** HTTP middleware doesn't cover WS scope.
-  If you add a socket, check the session *and* the role in the handler.
+- **The WebSocket guards itself.** HTTP middleware doesn't cover WS scope, so a
+  socket has to repeat all of it: the origin, the session and the role, in the
+  handler. A handshake cannot carry a CSRF token — `new WebSocket()` sets no
+  headers — so `Origin` is the only thing there is to judge it on.
 - **Secrets never leave the API.** Credential material is read from disk at run
   time and written to 0600 files in a per-run temp dir. No endpoint returns one.
 

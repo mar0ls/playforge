@@ -83,7 +83,7 @@ Verified behaviour, not aspiration:
 | Passwords | scrypt (N=2^16, r=8, p=1) with per-password salt; cost parameters stored in the hash and upgraded on next sign-in. A missing account costs the same time as a wrong password, so timing can't enumerate usernames. |
 | Session | HMAC-signed expiring token, `HttpOnly`, `SameSite=Lax`, `Secure` when served over HTTPS. Signing key derives from the password *and* the credential master key, so a leaked cookie can't be forged with either alone. |
 | Login throttling | 5 failed attempts per client address triggers a lockout, doubling from 30s to a 15min cap. Fails closed: the correct password is refused while locked. |
-| WebSockets | The run WebSocket re-checks both the session and the role itself — HTTP middleware doesn't cover the WS scope, so without this a LAN attacker could open a socket and run playbooks, and a viewer could bypass the capability check on `POST /api/runs` by using the socket instead. |
+| WebSockets | The run WebSocket re-checks the origin, the session and the role itself — HTTP middleware doesn't cover the WS scope. Without them: a hostile page could open a socket from a browser the operator already had open, a LAN attacker could open one and run playbooks, and a viewer could bypass the capability check on `POST /api/runs` by using the socket instead. |
 | Credentials | Encrypted at rest with Fernet. The key lives at `/data/master.key` (0600) or comes from `ANSIBLE_GUI_MASTER_KEY`. Secrets are never returned by the API. |
 | Run secrets | Vault/become passwords and SSH keys are written to 0600 files in a per-run temp dir, which is deleted after the run. |
 | Project files | Every path is resolved and confined to the project directory; `..` and absolute paths are refused. |

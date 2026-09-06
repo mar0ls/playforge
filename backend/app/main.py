@@ -242,10 +242,17 @@ async def csrf_protect(request: Request, call_next):
     return response
 
 
-# Registered after require_login on purpose. Starlette wraps middleware in reverse
-# registration order, so the last one added is the outermost — which is what makes
-# these headers reach responses that require_login short-circuits (401/403), not
-# just the ones that get through to a route.
+# Registration order matters and is the reverse of execution order: Starlette
+# wraps each middleware around the ones registered before it, so the last one
+# added is the outermost. The three above are registered require_login,
+# csrf_protect, security_headers, which means a request meets them backwards:
+#
+#   security_headers -> csrf_protect -> require_login -> route
+#
+# That is the order they need. Headers reach every response, including the 401s
+# and 403s the two inner layers short-circuit. And a cross-site write is refused
+# before any authentication work happens, since there is nothing to authenticate
+# on behalf of a site that should not be asking.
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     """Set security headers on every response, without overriding an explicit one."""
