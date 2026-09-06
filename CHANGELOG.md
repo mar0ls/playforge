@@ -26,9 +26,11 @@ All notable changes to Playforge are documented here. The format loosely follows
   the image is built inside.
 
 ### Added
-- **`.github/dependabot.yml` for GitHub Actions.** Every action is pinned by
-  commit SHA, which is correct and also means none of them can move on their own;
-  the 1.0.0 release warned that six still target the Node 20 runtime. Monthly and
+- **`.github/dependabot.yml` for GitHub Actions.** `release.yml` pins every action
+  by commit SHA, so none of them moves at all; `ci.yml` pins three by tag, which
+  float inside a major but never cross one. Neither kind crosses a major by
+  itself, which is what the 1.0.0 release ran into: six actions still targeting
+  the Node 20 runtime. Monthly and
   grouped into one pull request, because a bot a solo maintainer starts ignoring
   is worse than no bot. pip is deliberately excluded: a hash-pinned lock
   regenerated through `make lock` is not something to hand to a bot, and alerts
