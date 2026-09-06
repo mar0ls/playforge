@@ -164,4 +164,10 @@ Losing `master.key` means the encrypted credentials cannot be recovered.
 
 ## Supported versions
 
-Pre-1.0: only the latest release gets fixes.
+Security fixes go to the newest release and ship as a new patch on the current
+minor. Older minors are not backported. This is a single-maintainer project, and
+a support window it could not honour would be worse than saying so plainly.
+
+So: run the latest tag. `latest` on Docker Hub only ever moves to a stable
+release, `docker compose pull && docker compose up -d` is the whole upgrade, and
+migrations run at startup, so skipping several versions at once is fine.

@@ -40,6 +40,12 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
   Never edit or renumber a released step — someone's database is already stamped
   with it. Every step must be idempotent, because unstamped pre-0.1.0 databases
   replay all of them.
+- **The `/api` surface is a contract.** `tests/api_contract.json` records every
+  operation and its required parameters; `tests/test_api_contract.py` fails when
+  one disappears or grows a new required field, because both break callers that
+  worked yesterday. Adding endpoints and optional fields is free. When a change
+  to the surface is intended, run `make api-contract` and commit the regenerated
+  snapshot with it — a moved contract should be visible in the diff.
 - **New API routes need a capability.** `app/core/authz.py` maps every route to
   one; a route with no entry denies everyone, and `tests/test_authz.py` enumerates
   the real route table so an unmapped route fails the build rather than shipping.

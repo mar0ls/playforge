@@ -37,6 +37,21 @@ All notable changes to Playforge are documented here. The format loosely follows
   container as well as in the suite.
 
 ### Added
+- **The `/api` surface is now pinned.** `tests/api_contract.json` records all 84
+  operations with their required parameters and body fields;
+  `tests/test_api_contract.py` fails when one disappears or gains a requirement.
+  README has promised that paths and fields survive a major version, and from 1.0
+  that becomes binding — nothing was checking it. `make api-contract` regenerates
+  the snapshot, so an intended change to the surface arrives as a diff rather
+  than as a surprise for whoever wrote a script against it.
+
+  Page routes and `/login`/`/setup`/`/logout` are excluded on purpose: they are
+  the UI and free to change. `/health` is included, because the compose
+  healthcheck and the release smoke test both parse it. Response *field* names
+  are not covered — most handlers return plain dicts with no `response_model`, so
+  a snapshot would record an empty schema and prove nothing; that half stays with
+  the API tests that read those keys.
+
 - **API-layer tests for `projects.py`**, the least covered module in the tree —
   `tests/test_projects_api_editing.py` (24 cases: settings, `detected`,
   `dir`/`move`, playbook tags, the builder routes, inventory-host append) and
@@ -61,6 +76,11 @@ All notable changes to Playforge are documented here. The format loosely follows
   `app/api/projects.py` goes 42% -> 77%; the total 77.83% -> 81.99%.
 
 ### Changed
+- **Supported-versions policy stated for 1.0.** Fixes go to the newest release as
+  a patch on the current minor; older minors are not backported. A single
+  maintainer promising a support window would be promising something they cannot
+  hold, and SECURITY.md now says so instead of `Pre-1.0`.
+
 - **CI enforces a coverage floor.** `--cov-fail-under` in the test job, plus a
   `make coverage` target that runs the same gate locally. Coverage was already
   measured and uploaded to Codecov, but nothing failed a build when it fell — a
