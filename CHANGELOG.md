@@ -6,6 +6,14 @@ All notable changes to Playforge are documented here. The format loosely follows
 ## [Unreleased]
 
 ### Security
+- **The zip import's traversal guard actually contains.** It compared paths as
+  strings, and `extracted_evil` starts with `extracted`, so a sibling-named entry
+  passed a check meant to keep members inside the extraction directory. Nothing
+  escaped: `zipfile` strips `..` from member names itself, which is what made the
+  weakness invisible. A guard that holds only because of the thing it guards
+  stops holding the day that thing changes, so it now uses `is_relative_to`. The
+  test fails against the old comparison, which is how it earns its place.
+
 - **CSRF protection, in all three auth modes.** Two layers, both ahead of
   authentication.
 
