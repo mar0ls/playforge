@@ -199,9 +199,16 @@ def test_event_collector_synthesizes_pre_task_error_on_dead_run():
 # ---- security: WebSocket run endpoint re-checks auth (HTTP middleware skips WS) ----
 
 class _FakeWS:
-    """Minimal WebSocket stand-in: records accept()/close() and serves cookies."""
-    def __init__(self, cookies=None):
+    """Minimal WebSocket stand-in: records accept()/close() and serves cookies.
+
+    `headers` defaults to same-origin because a real handshake always carries
+    them and the handler now checks Origin before anything else. These tests are
+    about the auth decision, so they hand it a request that passes that check —
+    the cross-site case has its own tests in test_csrf.py.
+    """
+    def __init__(self, cookies=None, headers=None):
         self.cookies = cookies or {}
+        self.headers = headers if headers is not None else {"host": "testserver"}
         self.accepted = False
         self.closed_code = None
     async def accept(self):

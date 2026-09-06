@@ -19,6 +19,7 @@
 </head>
 <body>
   <form class="login-card" method="post" action="/setup">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
     <h1>✨ Create the first administrator</h1>
     <p class="text-sm muted hint">
       Paste the setup token from the container log. It stops anyone else who can

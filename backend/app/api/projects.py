@@ -184,9 +184,15 @@ async def import_zip(name: str = Form(...), description: str = Form(""), upload:
         extract_dir.mkdir()
         with zipfile.ZipFile(zip_path) as zf:
             for member in zf.namelist():
-                # Block path traversal in zip entries.
+                # Block path traversal in zip entries. `is_relative_to`, not a
+                # string prefix: `extracted_evil` starts with `extracted`, so a
+                # prefix test waves through a sibling directory. Nothing escapes
+                # today only because zipfile strips `..` from member names
+                # itself — a guard that leans on the thing it is guarding is not
+                # one, and the day this loop stops calling extractall it would
+                # stop holding.
                 target = (extract_dir / member).resolve()
-                if not str(target).startswith(str(extract_dir.resolve())):
+                if not target.is_relative_to(extract_dir.resolve()):
                     raise HTTPException(400, f"unsafe path in zip: {member}")
             zf.extractall(extract_dir)
 

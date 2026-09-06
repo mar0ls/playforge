@@ -93,11 +93,11 @@ docker compose up -d   # → http://127.0.0.1:8765
 ```
 
 This pulls the published image; nothing is built locally. `docker-compose.yml`
-also runs on its own if you'd rather not clone — see
-[DOCKERHUB.md](DOCKERHUB.md), which is the Docker Hub page.
+also runs on its own if you'd rather not clone — download that one file and run
+`docker compose up -d` next to it.
 
 `curl -s localhost:8765/health` reports the running version and schema version.
-Pin a version with `PLAYFORGE_VERSION=0.9.0` in `.env`; `latest` only ever moves
+Pin a version with `PLAYFORGE_VERSION=1.0.0` in `.env`; `latest` only ever moves
 to a stable release.
 
 The `.env` step is optional: with no `.env` the app runs single-user/local with no
@@ -137,6 +137,12 @@ browser could claim the instance.
 
 Failed logins are throttled per client address — 5 attempts, then a lockout
 doubling from 30s to 15 minutes.
+
+**Writing a script against your instance?** State-changing requests are checked
+for cross-site origin, and browsers additionally have to send a CSRF token. A
+client that never loads a page — `curl`, your script, `make lab-regression` —
+sends no `Origin` and picks up no cookie, so it is unaffected and needs no token.
+See [SECURITY.md](SECURITY.md) for why that is safe rather than a loophole.
 
 ### Optional
 
@@ -260,7 +266,8 @@ make lab-regression
 The command exits non-zero when preflight fails or any run is not `ok`/
 `successful`.
 
-The test suite (730+ cases) runs in CI on every push and PR — see
+The test suite (840+ cases) runs in CI on every push and PR, with a coverage
+floor CI enforces (`make coverage` runs the same gate locally) — see
 `.github/workflows/ci.yml`.
 
 ## Design notes
@@ -278,10 +285,15 @@ The test suite (730+ cases) runs in CI on every push and PR — see
 
 ## API stability
 
-The HTTP API under `/api` is what the UI itself uses, and it's stable: from 1.0
-onward, paths and response fields won't change or disappear within a major
-version. New optional fields and new endpoints can be added at any time, so
-parse responses tolerantly.
+The HTTP API under `/api` is what the UI itself uses, and it is stable: paths and
+response fields do not change or disappear within a major version. New optional
+fields and new endpoints can arrive at any time, so parse responses tolerantly.
+
+This is enforced, not just stated. `backend/tests/api_contract.json` records every
+operation with its required parameters and body fields, and the suite fails if one
+disappears or grows a new requirement. Response field names are held by the API
+tests that read them rather than by the snapshot — handlers return plain dicts, so
+OpenAPI has no response schema to pin.
 
 There is deliberately no `/api/v1` prefix. The API is consumed by this app's own
 frontend and by scripts people write against their own instance, not published as

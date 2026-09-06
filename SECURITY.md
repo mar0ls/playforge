@@ -83,21 +83,63 @@ Verified behaviour, not aspiration:
 | Passwords | scrypt (N=2^16, r=8, p=1) with per-password salt; cost parameters stored in the hash and upgraded on next sign-in. A missing account costs the same time as a wrong password, so timing can't enumerate usernames. |
 | Session | HMAC-signed expiring token, `HttpOnly`, `SameSite=Lax`, `Secure` when served over HTTPS. Signing key derives from the password *and* the credential master key, so a leaked cookie can't be forged with either alone. |
 | Login throttling | 5 failed attempts per client address triggers a lockout, doubling from 30s to a 15min cap. Fails closed: the correct password is refused while locked. |
-| WebSockets | The run WebSocket re-checks both the session and the role itself — HTTP middleware doesn't cover the WS scope, so without this a LAN attacker could open a socket and run playbooks, and a viewer could bypass the capability check on `POST /api/runs` by using the socket instead. |
+| WebSockets | The run WebSocket re-checks the origin, the session and the role itself — HTTP middleware doesn't cover the WS scope. Without them: a hostile page could open a socket from a browser the operator already had open, a LAN attacker could open one and run playbooks, and a viewer could bypass the capability check on `POST /api/runs` by using the socket instead. |
 | Credentials | Encrypted at rest with Fernet. The key lives at `/data/master.key` (0600) or comes from `ANSIBLE_GUI_MASTER_KEY`. Secrets are never returned by the API. |
 | Run secrets | Vault/become passwords and SSH keys are written to 0600 files in a per-run temp dir, which is deleted after the run. |
 | Project files | Every path is resolved and confined to the project directory; `..` and absolute paths are refused. |
 | Rendered output | Model and file content is HTML-escaped before any Markdown formatting is re-introduced, so a prompt-injected reply can't inject script. |
+| Cross-site | State-changing requests must pass an origin check (`Sec-Fetch-Site`, else `Origin` vs `Host`), and must carry a signed CSRF token whenever the browser sent the CSRF cookie. Enforced in all three auth modes; the WebSocket handshake checks `Origin` itself. |
 | Headers | CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer` on every response. |
 
-### No CSRF tokens
+### Cross-site requests
 
-State-changing requests are protected by `SameSite=Lax` on the session cookie,
-which stops a cross-site form or fetch from carrying it, and by `form-action
-'self'` in the CSP. There are no per-request CSRF tokens, so that cookie
-attribute is the whole defence — an older browser that ignores `SameSite`, or a
-same-site subdomain an attacker controls, would not be covered. Tokens are
-planned.
+Every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) has to show it
+was not set in motion by another site. The check prefers `Sec-Fetch-Site`, the
+browser's own verdict, and refuses `same-site` as well as `cross-site` — a
+subdomain an attacker controls is exactly what `SameSite=Lax` never covered.
+Without that header it compares `Origin` against the request's own `Host`, on
+host and port only: uvicorn runs without `--proxy-headers`, so behind the TLS
+termination this document recommends it would see `http` while the browser
+reports `https`, and comparing schemes would refuse every request.
+
+A request carrying neither header is allowed. `curl`, scripts and
+`make lab-regression` send no `Origin`, and a hostile page cannot suppress one —
+the browser attaches it to every cross-origin request — so absence means no
+browser was tricked into sending it.
+
+This runs in all three auth modes, and the default one is why. With no accounts
+and no `ANSIBLE_GUI_PASSWORD` there is no session cookie, so there was nothing
+for `SameSite` to withhold: an instance on `127.0.0.1` could be driven by any
+page open in the same browser. JSON endpoints were shielded by the browser's own
+CORS preflight, but `multipart/form-data` needs no preflight, and
+`POST /api/projects/import-zip` accepts it. `tests/test_csrf.py` reproduces the
+request that used to succeed and now asserts it is refused.
+
+On top of that, a page carries a **signed token**. The cookie holds a nonce and
+the token is an HMAC of that nonce under the server key, so planting a cookie —
+what a subdomain can do, since cookies are not origin-scoped — buys nothing
+without the key. Plain double-submit, which only checks that the two halves
+match, would accept exactly that; `tests/test_csrf.py` asserts the echo is
+refused.
+
+The token is required only when the request carries the CSRF cookie, and that
+cookie is issued only with an HTML page. A client that never loaded a page —
+curl, a script, `make lab-regression` — has neither, and is governed by the
+Origin check. This is not a way around the token: under `SameSite=Lax` a forged
+cross-site request arrives with no cookies either, so demanding a token from
+cookie-less requests would refuse automation without troubling an attacker.
+
+The three real form posts (`/login`, `/setup`, `/logout`) send the token in a
+body field, since a form cannot set a header, and each route checks it under the
+same rule.
+
+The run **WebSocket** checks `Origin` in its handshake. HTTP middleware never
+sees that scope, and `new WebSocket()` cannot set a header, so a token is not
+available there — without the check a hostile page could open a socket and run
+playbooks with the stored credentials.
+
+`SameSite=Lax` on the session cookie and `form-action 'self'` in the CSP are
+still in place; they are now further layers rather than the only one.
 
 ### CSP caveat
 
@@ -122,4 +164,10 @@ Losing `master.key` means the encrypted credentials cannot be recovered.
 
 ## Supported versions
 
-Pre-1.0: only the latest release gets fixes.
+Security fixes go to the newest release and ship as a new patch on the current
+minor. Older minors are not backported. This is a single-maintainer project, and
+a support window it could not honour would be worse than saying so plainly.
+
+So: run the latest tag. `latest` on Docker Hub only ever moves to a stable
+release, `docker compose pull && docker compose up -d` is the whole upgrade, and
+migrations run at startup, so skipping several versions at once is fine.

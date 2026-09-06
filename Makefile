@@ -1,4 +1,4 @@
-.PHONY: build lock up down logs shell test test-fixture lab-regression backup restore clean
+.PHONY: build lock up down logs shell test coverage api-contract test-fixture lab-regression backup restore clean
 
 # The base compose file pulls the published image, so building from source goes
 # through the dev overlay. Produces `playforge:dev`, the tag `make test` uses.
@@ -36,6 +36,27 @@ test:
 	  -v $(PWD)/backend/requirements-dev.txt:/app/requirements-dev.txt:ro \
 	  playforge:dev \
 	  sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest"
+
+# Same suite with the coverage gate CI enforces, so a drop is visible before the
+# push rather than in a red build. --cov-fail-under must match ci.yml.
+coverage:
+	docker run --rm \
+	  -v $(PWD)/backend/tests:/app/tests:ro \
+	  -v $(PWD)/backend/pytest.ini:/app/pytest.ini:ro \
+	  -v $(PWD)/backend/requirements-dev.txt:/app/requirements-dev.txt:ro \
+	  playforge:dev \
+	  sh -c "pip install -q -U -r requirements-dev.txt && python -m pytest --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=82"
+
+# Regenerate tests/api_contract.json from the running app. Commit the result with
+# the change that moved the surface: a regenerated snapshot in a diff is the cue
+# to ask whether callers were considered.
+api-contract:
+	docker run --rm \
+	  -v $(PWD)/backend/tests:/app/tests \
+	  -v $(PWD)/backend/requirements-dev.txt:/app/requirements-dev.txt:ro \
+	  playforge:dev \
+	  sh -c "pip install -q -U -r requirements-dev.txt && python -c \"import json, sys; sys.path.insert(0, '/app/tests'); from test_api_contract import current; json.dump(current(), open('/app/tests/api_contract.json', 'w'), indent=2, sort_keys=True)\""
+	@echo "Wrote backend/tests/api_contract.json"
 
 # Zip the example project so it can be imported via the UI.
 test-fixture:

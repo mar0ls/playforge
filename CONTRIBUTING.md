@@ -26,6 +26,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
   see the existing files in `backend/tests/` for the pattern.
 - **`make test` green in the image**, and `python -m mypy app --config-file mypy.ini`
   clean.
+- **Coverage that doesn't go backwards.** `make coverage` runs the same gate CI
+  does (`--cov-fail-under`); a change that drops the total below the floor fails
+  the build. The floor is a ratchet — raise it when the number rises, never lower
+  it to go green.
 - **A CHANGELOG entry** under a version heading. `tests/test_version.py` fails the
   build if `app.__version__` has no matching section.
 
@@ -36,11 +40,19 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
   Never edit or renumber a released step — someone's database is already stamped
   with it. Every step must be idempotent, because unstamped pre-0.1.0 databases
   replay all of them.
+- **The `/api` surface is a contract.** `tests/api_contract.json` records every
+  operation and its required parameters; `tests/test_api_contract.py` fails when
+  one disappears or grows a new required field, because both break callers that
+  worked yesterday. Adding endpoints and optional fields is free. When a change
+  to the surface is intended, run `make api-contract` and commit the regenerated
+  snapshot with it — a moved contract should be visible in the diff.
 - **New API routes need a capability.** `app/core/authz.py` maps every route to
   one; a route with no entry denies everyone, and `tests/test_authz.py` enumerates
   the real route table so an unmapped route fails the build rather than shipping.
-- **The WebSocket authenticates itself.** HTTP middleware doesn't cover WS scope.
-  If you add a socket, check the session *and* the role in the handler.
+- **The WebSocket guards itself.** HTTP middleware doesn't cover WS scope, so a
+  socket has to repeat all of it: the origin, the session and the role, in the
+  handler. A handshake cannot carry a CSRF token — `new WebSocket()` sets no
+  headers — so `Origin` is the only thing there is to judge it on.
 - **Secrets never leave the API.** Credential material is read from disk at run
   time and written to 0600 files in a per-run temp dir. No endpoint returns one.
 

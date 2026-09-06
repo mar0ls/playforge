@@ -5,6 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Playforge{% endblock %}</title>
   <link rel="icon" type="image/png" href="/static/img/favicon.png">
+  <meta name="csrf-token" content="{{ request.state.csrf_token }}">
+  <script>
+    // One wrapper instead of a token argument at ~97 fetch call sites. Only
+    // same-origin, state-changing requests get the header: a token must never
+    // travel to a third party, and reads are not checked server-side anyway.
+    (function () {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      var token = meta ? meta.getAttribute('content') : '';
+      var unsafe = /^(POST|PUT|PATCH|DELETE)$/i;
+      var inner = window.fetch;
+      window.fetch = function (input, init) {
+        init = init || {};
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        var absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(url);
+        var sameOrigin = !absolute || url.indexOf(window.location.origin) === 0;
+        var method = (init.method || (input && input.method) || 'GET').toUpperCase();
+        if (token && sameOrigin && unsafe.test(method)) {
+          var headers = new Headers(init.headers || (input && input.headers) || undefined);
+          if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', token);
+          init = Object.assign({}, init, { headers: headers });
+        }
+        return inner.call(this, input, init);
+      };
+    })();
+</script>
   <link rel="stylesheet" href="/static/css/app.css">
   <style>
     .ai-fab { position: fixed; bottom: 20px; right: 20px; width: 54px; height: 54px;
@@ -90,6 +115,7 @@
     <div class="spacer"></div>
     {% if auth_enabled() %}
     <form method="post" action="/logout" style="margin: 0 0 .4rem;">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
       <button type="submit" class="btn-ghost btn-sm" style="width:100%;">
         <i class="icon" data-lucide="log-out"></i> Logout
       </button>

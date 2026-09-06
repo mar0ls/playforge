@@ -1,0 +1,553 @@
+{
+  "DELETE /api/credentials/{cred_id}": {
+    "required_body": [],
+    "required_params": [
+      "cred_id"
+    ]
+  },
+  "DELETE /api/projects/{project_id}": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "DELETE /api/projects/{project_id}/environments/{env_id}": {
+    "required_body": [],
+    "required_params": [
+      "env_id",
+      "project_id"
+    ]
+  },
+  "DELETE /api/projects/{project_id}/file": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id"
+    ]
+  },
+  "DELETE /api/projects/{project_id}/templates/{template_id}": {
+    "required_body": [],
+    "required_params": [
+      "project_id",
+      "template_id"
+    ]
+  },
+  "DELETE /api/runs": {
+    "required_body": [],
+    "required_params": []
+  },
+  "DELETE /api/schedules/{schedule_id}": {
+    "required_body": [],
+    "required_params": [
+      "schedule_id"
+    ]
+  },
+  "DELETE /api/users/{user_id}": {
+    "required_body": [],
+    "required_params": [
+      "user_id"
+    ]
+  },
+  "GET /api/ai/config": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/ai/status": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/credentials": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/dashboard/recent-runs": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/dashboard/stats": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/dashboard/system": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/library/playbook-templates": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/library/playbook-templates/{template_id}": {
+    "required_body": [],
+    "required_params": [
+      "template_id"
+    ]
+  },
+  "GET /api/projects": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/projects/{project_id}/detected": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/environments": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/file": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/file/at": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id",
+      "sha"
+    ]
+  },
+  "GET /api/projects/{project_id}/file/history": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/galaxy": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/git": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/inventory": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/runs": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/runs/{run_id}": {
+    "required_body": [],
+    "required_params": [
+      "project_id",
+      "run_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/settings": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/tags": {
+    "required_body": [],
+    "required_params": [
+      "playbook",
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/templates": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/tree": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "GET /api/projects/{project_id}/vault/status": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id"
+    ]
+  },
+  "GET /api/runs": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/runs/{run_id}": {
+    "required_body": [],
+    "required_params": [
+      "run_id"
+    ]
+  },
+  "GET /api/schedules": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /api/users": {
+    "required_body": [],
+    "required_params": []
+  },
+  "GET /health": {
+    "required_body": [],
+    "required_params": []
+  },
+  "PATCH /api/credentials/{cred_id}": {
+    "required_body": [],
+    "required_params": [
+      "cred_id"
+    ]
+  },
+  "PATCH /api/users/{user_id}": {
+    "required_body": [],
+    "required_params": [
+      "user_id"
+    ]
+  },
+  "POST /api/ai/agent": {
+    "required_body": [
+      "goal",
+      "project_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/ai/chat": {
+    "required_body": [
+      "messages"
+    ],
+    "required_params": []
+  },
+  "POST /api/ai/chat/stream": {
+    "required_body": [
+      "messages"
+    ],
+    "required_params": []
+  },
+  "POST /api/ai/explain-failure": {
+    "required_body": [
+      "failure"
+    ],
+    "required_params": []
+  },
+  "POST /api/ai/generate-playbook": {
+    "required_body": [
+      "description"
+    ],
+    "required_params": []
+  },
+  "POST /api/ai/narrate-plan": {
+    "required_body": [],
+    "required_params": []
+  },
+  "POST /api/ai/probe": {
+    "required_body": [
+      "provider"
+    ],
+    "required_params": []
+  },
+  "POST /api/ai/suggest-fix": {
+    "required_body": [
+      "failure",
+      "project_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/credentials": {
+    "required_body": [
+      "kind",
+      "name",
+      "secret"
+    ],
+    "required_params": []
+  },
+  "POST /api/credentials/{cred_id}/test": {
+    "required_body": [
+      "project_id"
+    ],
+    "required_params": [
+      "cred_id"
+    ]
+  },
+  "POST /api/projects": {
+    "required_body": [
+      "name"
+    ],
+    "required_params": []
+  },
+  "POST /api/projects/import-git": {
+    "required_body": [
+      "url"
+    ],
+    "required_params": []
+  },
+  "POST /api/projects/import-path": {
+    "required_body": [
+      "path"
+    ],
+    "required_params": []
+  },
+  "POST /api/projects/import-zip": {
+    "required_body": [
+      "name",
+      "upload"
+    ],
+    "required_params": []
+  },
+  "POST /api/projects/{project_id}/dir": {
+    "required_body": [
+      "path"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/environments": {
+    "required_body": [
+      "name"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/galaxy/add": {
+    "required_body": [
+      "kind",
+      "name"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/galaxy/install": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/galaxy/remove": {
+    "required_body": [
+      "kind",
+      "name"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/git/pull": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/git/push": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/git/remote": {
+    "required_body": [
+      "url"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/inventory/host": {
+    "required_body": [
+      "group",
+      "inventory_path",
+      "name"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/lint": {
+    "required_body": [],
+    "required_params": [
+      "path",
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/move": {
+    "required_body": [
+      "dst",
+      "src"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/playbook": {
+    "required_body": [
+      "path",
+      "spec"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/playbook/preview": {
+    "required_body": [
+      "path",
+      "spec"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/runbook": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/templates": {
+    "required_body": [
+      "name",
+      "playbook"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/vault/decrypt": {
+    "required_body": [
+      "credential_id",
+      "path"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/vault/encrypt": {
+    "required_body": [
+      "credential_id",
+      "path"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/vault/encrypt-string": {
+    "required_body": [
+      "credential_id",
+      "name",
+      "value"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/projects/{project_id}/vault/view": {
+    "required_body": [
+      "credential_id",
+      "path"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "POST /api/runs": {
+    "required_body": [
+      "project_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/runs/adhoc": {
+    "required_body": [
+      "project_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/runs/preflight": {
+    "required_body": [
+      "project_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/runs/preview": {
+    "required_body": [
+      "project_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/schedules": {
+    "required_body": [
+      "cron_expr",
+      "name",
+      "project_id",
+      "template_id"
+    ],
+    "required_params": []
+  },
+  "POST /api/users": {
+    "required_body": [
+      "password",
+      "username"
+    ],
+    "required_params": []
+  },
+  "PUT /api/ai/config": {
+    "required_body": [],
+    "required_params": []
+  },
+  "PUT /api/projects/{project_id}/environments/{env_id}": {
+    "required_body": [],
+    "required_params": [
+      "env_id",
+      "project_id"
+    ]
+  },
+  "PUT /api/projects/{project_id}/file": {
+    "required_body": [
+      "content",
+      "path"
+    ],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "PUT /api/projects/{project_id}/settings": {
+    "required_body": [],
+    "required_params": [
+      "project_id"
+    ]
+  },
+  "PUT /api/projects/{project_id}/templates/{template_id}": {
+    "required_body": [
+      "name",
+      "playbook"
+    ],
+    "required_params": [
+      "project_id",
+      "template_id"
+    ]
+  },
+  "PUT /api/schedules/{schedule_id}": {
+    "required_body": [
+      "cron_expr",
+      "name",
+      "project_id",
+      "template_id"
+    ],
+    "required_params": [
+      "schedule_id"
+    ]
+  }
+}

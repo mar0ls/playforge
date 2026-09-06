@@ -3,6 +3,111 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [1.0.0] — 2026-09-06
+
+The version where the promises start binding. No new features: what changed is
+that the API surface, the cross-site posture and the support policy are now
+things a user can hold the project to, and each one is enforced by something that
+fails a build rather than by a sentence in a document.
+
+
+### Security
+- **The zip import's traversal guard actually contains.** It compared paths as
+  strings, and `extracted_evil` starts with `extracted`, so a sibling-named entry
+  passed a check meant to keep members inside the extraction directory. Nothing
+  escaped: `zipfile` strips `..` from member names itself, which is what made the
+  weakness invisible. A guard that holds only because of the thing it guards
+  stops holding the day that thing changes, so it now uses `is_relative_to`. The
+  test fails against the old comparison, which is how it earns its place.
+
+- **CSRF protection, in all three auth modes.** Two layers, both ahead of
+  authentication.
+
+  *Origin.* A state-changing request must not have been set in motion by another
+  site: `Sec-Fetch-Site` when the browser sends it (refusing `same-site` as well
+  as `cross-site`, so a subdomain is covered), otherwise `Origin` against `Host`,
+  compared on host and port — uvicorn runs without `--proxy-headers`, so
+  comparing schemes would refuse every request behind TLS termination.
+
+  *Token.* Pages carry a token that is an HMAC of a nonce held in a cookie, so
+  planting a cookie is not enough; a plain double-submit echo is refused. One
+  wrapper around `fetch` in `base.html` covers every call site; the three real
+  form posts carry it in a body field. The token is demanded only when the
+  request carries the cookie, which is issued only with an HTML page — curl and
+  scripts stay cookie-less and are governed by the Origin layer, as a forged
+  request is too.
+
+  The run WebSocket now checks `Origin` in its handshake. HTTP middleware never
+  sees that scope and a handshake cannot set a header, so without it a hostile
+  page could open a socket and run playbooks with the stored credentials.
+
+  This matters most in the mode README calls the default. With no accounts and no
+  `ANSIBLE_GUI_PASSWORD` there is no session cookie, so `SameSite` had nothing to
+  withhold and an instance on `127.0.0.1` could be driven by any page open in the
+  same browser: `multipart/form-data` reaches it without a CORS preflight, and
+  `POST /api/projects/import-zip` accepts multipart. `tests/test_csrf.py` was
+  written against the old behaviour first and recorded that forged upload
+  succeeding with 200; it now asserts the 403, confirmed against a running
+  container as well as in the suite.
+
+### Added
+- **The `/api` surface is now pinned.** `tests/api_contract.json` records all 84
+  operations with their required parameters and body fields;
+  `tests/test_api_contract.py` fails when one disappears or gains a requirement.
+  README has promised that paths and fields survive a major version, and from 1.0
+  that becomes binding — nothing was checking it. `make api-contract` regenerates
+  the snapshot, so an intended change to the surface arrives as a diff rather
+  than as a surprise for whoever wrote a script against it.
+
+  Page routes and `/login`/`/setup`/`/logout` are excluded on purpose: they are
+  the UI and free to change. `/health` is included, because the compose
+  healthcheck and the release smoke test both parse it. Response *field* names
+  are not covered — most handlers return plain dicts with no `response_model`, so
+  a snapshot would record an empty schema and prove nothing; that half stays with
+  the API tests that read those keys.
+
+- **API-layer tests for `projects.py`**, the least covered module in the tree —
+  `tests/test_projects_api_editing.py` (24 cases: settings, `detected`,
+  `dir`/`move`, playbook tags, the builder routes, inventory-host append) and
+  `tests/test_projects_api_galaxy_git.py` (22 cases: Galaxy status/install/
+  add/remove and the git remote endpoints). The helpers underneath were well
+  covered; the routes deciding which failure becomes a 400, a 404 or a 409 were
+  not exercised at all, and from 1.0 those codes are a promise.
+
+  The Galaxy file pins one behaviour worth naming: `add`/`remove` must flush
+  *every* snapshot of ansible-doc state together — the RAG index, the
+  known-modules set and the chat reply cache. A stale one is what makes a
+  freshly installed collection still read as "doesn't exist".
+
+  A third pair covers the rest of the module's surface:
+  `tests/test_projects_api_vault.py` (16 cases) runs the real `ansible-vault`
+  through encrypt/decrypt/view — a stub there would only prove the stub was
+  called — and pins that a wrong password leaves the file intact and that `view`
+  never rewrites it. `tests/test_projects_api_import.py` (14 cases) covers
+  import-path and import-zip, including the guard that rejects a zip entry
+  climbing out of the extraction directory.
+
+  `app/api/projects.py` goes 42% -> 77%; the total 77.83% -> 81.99%.
+
+### Changed
+- **Supported-versions policy stated for 1.0.** Fixes go to the newest release as
+  a patch on the current minor; older minors are not backported. A single
+  maintainer promising a support window would be promising something they cannot
+  hold, and SECURITY.md now says so instead of `Pre-1.0`.
+
+- **CI enforces a coverage floor.** `--cov-fail-under` in the test job, plus a
+  `make coverage` target that runs the same gate locally. Coverage was already
+  measured and uploaded to Codecov, but nothing failed a build when it fell — a
+  number nobody defends drifts down. The floor is a ratchet: raise it as tests
+  land, never lower it to go green. Currently 81, just under the real total
+  (81.99%), because coverage.py compares the unrounded figure.
+
+### Removed
+- **`DOCKERHUB.md`.** The overview is edited on Docker Hub itself now. The file
+  existed for a sync step that a personal access token can't perform, and a copy
+  in the repository that nothing publishes only drifts from the page it claims to
+  be. `git show v0.9.0:DOCKERHUB.md` still has the text.
+
 ## [0.9.0] — 2026-08-08
 
 Published to Docker Hub. `docker compose up -d` now pulls an image instead of

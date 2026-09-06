@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 from datetime import datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -639,12 +640,25 @@ async def adhoc(payload: AdhocIn):
 async def run_ws(ws: WebSocket):
     """Client sends a RunIn JSON, receives events; `{"action":"cancel"}` aborts.
 
-    HTTP middleware doesn't cover WS scope, so both the session *and* the role are
-    re-checked here — otherwise a LAN attacker could open a WS and run any playbook
-    with the configured credentials, and a viewer could bypass the capability check
-    that guards `POST /api/runs` simply by using the socket instead.
+    HTTP middleware doesn't cover WS scope, so everything it would have done is
+    repeated here: the request's origin, the session *and* the role. Without the
+    session check a LAN attacker could open a WS and run any playbook with the
+    configured credentials; without the role check a viewer could bypass the
+    capability guarding `POST /api/runs` by using the socket instead; without the
+    origin check a hostile page could do the same from a browser the operator
+    already had open.
     """
     from app.core import users as users_core
+
+    # The HTTP middleware never sees this scope, so the cross-site check has to
+    # be repeated here. A token is not an option: `new WebSocket()` cannot set a
+    # header, so Origin is the only thing a handshake can be judged on. Without
+    # it a hostile page could open a socket and run playbooks with the stored
+    # credentials — the same attack the middleware refuses over HTTP.
+    origin = ws.headers.get("origin")
+    if origin is not None and urlparse(origin).netloc != (ws.headers.get("host") or ""):
+        await ws.close(code=4403)
+        return
 
     actor_id: int | None = None
     if await users_core.multi_user_enabled():
