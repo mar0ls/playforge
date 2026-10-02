@@ -1,4 +1,4 @@
-# Version updates for GitHub Actions only.
+# Version updates for GitHub Actions; security updates only for pip.
 #
 # release.yml pins every action by commit SHA, which is the right way to depend on
 # one and also means none of them can move at all. ci.yml pins three by tag
@@ -8,11 +8,13 @@
 # broken until the runner stops supporting it. Dependabot rewrites the SHA and
 # the version comment together, which is the tedious part to do by hand.
 #
-# pip is deliberately absent. The image installs from `backend/requirements-lock.txt`
-# with `--require-hashes`, regenerated deliberately through `make lock`, and a bot
-# editing a hash-pinned file is more likely to produce a broken build than a
-# useful one. Dependabot *alerts* still cover those packages; this file is only
-# about scheduled version bumps.
+# pip gets no scheduled bumps. The image installs from `backend/requirements-lock.txt`
+# with `--require-hashes`, regenerated deliberately through `make lock`, and a
+# monthly bot rewrite of a hash-pinned file is more likely to produce a broken
+# build than a useful one. The pip entry exists anyway, with its PR limit at 0,
+# because security updates still open PRs and Dependabot refuses to rebase a PR
+# whose ecosystem has no entry here. That is how #23 (GitPython, 14 alerts)
+# ended up bumped by hand.
 version: 2
 
 updates:
@@ -30,3 +32,12 @@ updates:
       actions:
         patterns:
           - "*"
+
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "monthly"
+    # 0 turns off version updates only; security updates ignore this limit.
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "fix(deps)"

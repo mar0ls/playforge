@@ -97,7 +97,7 @@ also runs on its own if you'd rather not clone — download that one file and ru
 `docker compose up -d` next to it.
 
 `curl -s localhost:8765/health` reports the running version and schema version.
-Pin a version with `PLAYFORGE_VERSION=1.0.0` in `.env`; `latest` only ever moves
+Pin a version with `PLAYFORGE_VERSION=1.0.1` in `.env`; `latest` only ever moves
 to a stable release.
 
 The `.env` step is optional: with no `.env` the app runs single-user/local with no
