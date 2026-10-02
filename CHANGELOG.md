@@ -3,7 +3,7 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
-## [Unreleased]
+## [1.0.1] — 2026-10-02
 
 ### Security
 - **GitPython 3.1.57 -> 3.1.62.** The shipped image carried 14 open advisories

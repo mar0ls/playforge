@@ -6,4 +6,4 @@ the OpenAPI schema (`/docs`), the `/health` payload, and the sidebar footer.
 Bump it together with the git tag and the CHANGELOG entry.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
