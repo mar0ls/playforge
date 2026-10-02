@@ -395,7 +395,7 @@ def set_remote(project_id: str, url: str) -> None:
         raise StorageError("remote url is required")
     repo = Repo(paths_for(project_id).root)
     try:
-        repo.delete_remote("origin")  # type: ignore[arg-type]  # GitPython accepts a name
+        repo.delete_remote("origin")  # type: ignore[arg-type, unused-ignore]  # GitPython < 3.2 types it as Remote only
     except Exception:
         pass
     repo.create_remote("origin", url)

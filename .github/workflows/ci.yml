@@ -85,8 +85,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Runtime deps come from the lock, same as the image, so the check sees
+      # the library versions that actually ship. A new upstream release only
+      # reaches it through a Dependabot bump of the lock.
       - name: Install mypy + runtime deps
-        run: pip install -q "mypy>=1.8" -r backend/requirements.txt
+        run: |
+          pip install -q --require-hashes -r backend/requirements-lock.txt
+          pip install -q "mypy>=1.8"
 
       - name: Type-check backend/app
         working-directory: backend

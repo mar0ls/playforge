@@ -1,11 +1,12 @@
 # Version updates for GitHub Actions only.
 #
-# Every action in this repository is pinned by commit SHA, which is the right
-# way to depend on one and also means none of them can ever move on its own. The
-# v1.0.0 release warned that six were still targeting the Node 20 runtime, which
-# is exactly the drift a SHA pin creates: nothing is wrong until suddenly the
-# runner stops supporting it. Dependabot rewrites the SHA and the version comment
-# together, which is the part that is tedious to do by hand.
+# release.yml pins every action by commit SHA, which is the right way to depend on
+# one and also means none of them can move at all. ci.yml pins three by tag
+# (checkout, setup-python, codecov), which float within a major version but never
+# cross one. Neither kind crosses a major on its own, and that is what the v1.0.0
+# release ran into: six actions still targeting the Node 20 runtime, nothing
+# broken until the runner stops supporting it. Dependabot rewrites the SHA and
+# the version comment together, which is the tedious part to do by hand.
 #
 # pip is deliberately absent. The image installs from `backend/requirements-lock.txt`
 # with `--require-hashes`, regenerated deliberately through `make lock`, and a bot
