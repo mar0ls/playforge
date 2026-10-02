@@ -5,7 +5,23 @@ All notable changes to Playforge are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Security
+- **GitPython 3.1.57 -> 3.1.62.** The shipped image carried 14 open advisories
+  against it (1 critical, 9 high), all fixed by 3.1.62. Only the pin and its
+  hashes change in the lock; the floor in `requirements.txt` moves with it so
+  `make lock` cannot resolve back to a vulnerable version.
+
 ### Changed
+- **Dependabot now has a pip entry, with its PR limit at 0.** Scheduled pip bumps
+  stay off, but security updates were already opening pip PRs, and without an
+  entry Dependabot refuses to rebase them. The GitPython fix above had to be
+  made by hand for exactly that reason.
+
+- **The `types` job installs the hashed lock, not `requirements.txt`.** It used to
+  resolve the newest release of everything, so GitPython 3.2.0 turned `main` red
+  the day it shipped by making a `type: ignore` unused. It now checks the
+  versions the image actually installs.
+
 - **`backend/requirements.lock` is now `backend/requirements-lock.txt`.** GitHub's
   dependency graph was reading `requirements.txt` and not the lock, so Dependabot
   alerts covered 21 floor-pinned packages while the image installs 73 exact ones.
@@ -32,7 +48,7 @@ All notable changes to Playforge are documented here. The format loosely follows
   itself, which is what the 1.0.0 release ran into: six actions still targeting
   the Node 20 runtime. Monthly and
   grouped into one pull request, because a bot a solo maintainer starts ignoring
-  is worse than no bot. pip is deliberately excluded: a hash-pinned lock
+  is worse than no bot. pip gets no scheduled bumps: a hash-pinned lock
   regenerated through `make lock` is not something to hand to a bot, and alerts
   cover those packages regardless.
 
