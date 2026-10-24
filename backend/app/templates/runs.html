@@ -71,7 +71,7 @@
 
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function runsPage() {
   return {
     runs: [], projects: [], loading: false,

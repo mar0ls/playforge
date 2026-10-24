@@ -66,7 +66,7 @@ class PreflightIn(BaseModel):
     include_targets: bool = True
 
 
-async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
+async def _build_request(payload: RunIn, *, user_id: int | None = None) -> tuple[RunRequest, int | None]:
     """RunIn → RunRequest + resolved env_id. Template fills defaults; payload overrides.
 
     Validates project_id exists on disk — without it a typo'd id used to write
@@ -114,17 +114,24 @@ async def _build_request(payload: RunIn) -> tuple[RunRequest, int | None]:
     if not base.get("playbook"):
         raise HTTPException(400, "playbook is required (directly or via a template)")
 
-    base.update(await _resolve_credentials(credential_ids))
+    base.update(await _resolve_credentials(credential_ids, user_id=user_id,
+                                           project_id=base.get("project_id", "")))
 
     return RunRequest(**base), environment_id
 
 
-async def _resolve_credentials(credential_ids: list[int]) -> dict:
+async def _resolve_credentials(credential_ids: list[int], *, user_id: int | None = None,
+                               project_id: str = "") -> dict:
     """Credential ids → decrypted RunRequest fields.
 
     Shared by the playbook path and the ad-hoc endpoint so the two can't drift —
     ad-hoc used to accept no credentials at all, which made it fail on exactly the
     hosts a normal run could reach.
+
+    Decrypting credential material is a secret-read worth an audit row: a Run row
+    records *that* a run happened, this records *which* stored secrets were pulled
+    into plaintext to do it. `user_id` attributes it when a signed-in user drove
+    the request (None for scheduled runs / shared-password mode).
     """
     if not credential_ids:
         return {}
@@ -133,6 +140,12 @@ async def _resolve_credentials(credential_ids: list[int]) -> dict:
         creds = (await session.execute(
             select(Credential).where(Credential.id.in_(credential_ids))
         )).scalars().all()
+
+    if creds:
+        from app.core import audit
+        kinds = sorted({c.kind for c in creds})
+        await audit.record(audit.SECRET_RUN_CREDENTIALS, project_id, user_id=user_id,
+                           detail=f"credentials={[c.name for c in creds]} kinds={kinds}")
 
     out: dict = {}
     # ansible-runner takes one of each per run; first of a kind wins.
@@ -442,7 +455,7 @@ def _actor_id(scope) -> int | None:
 async def start_run(payload: RunIn,
                     request: Request = None):  # type: ignore[assignment]
     """Run a playbook synchronously (waits for completion). For live output use the WebSocket."""
-    req, environment_id = await _build_request(payload)
+    req, environment_id = await _build_request(payload, user_id=_actor_id(request))
     async with SessionLocal() as session:
         run = Run(project_id=req.project_id, playbook=req.playbook, inventory=req.inventory,
                   tags=",".join(req.tags), status="running", environment_id=environment_id,
@@ -619,13 +632,14 @@ class AdhocIn(BaseModel):
 
 
 @router.post("/adhoc")
-async def adhoc(payload: AdhocIn):
+async def adhoc(payload: AdhocIn, request: Request = None):  # type: ignore[assignment]
     try:
         storage.paths_for(payload.project_id)
     except storage.StorageError as e:
         raise HTTPException(404, str(e))
 
-    creds = await _resolve_credentials(payload.credential_ids)
+    creds = await _resolve_credentials(payload.credential_ids, user_id=_actor_id(request),
+                                       project_id=payload.project_id)
     result = await run_adhoc(
         payload.project_id, payload.host_pattern,
         payload.module, payload.args, payload.inventory,

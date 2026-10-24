@@ -110,7 +110,7 @@
   </template>
 
 </section>
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function schedulesPage() {
   return {
     schedules: [], projects: [], allTemplates: {}, showForm: false, saving: false, editingId: null,

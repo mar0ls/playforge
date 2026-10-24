@@ -40,7 +40,7 @@
 
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function projectPage(projectId) {
   // Non-reactive heavy objects live in closure scope, NOT on `this`.
   // Alpine wraps top-level properties in Proxies for reactivity, which breaks

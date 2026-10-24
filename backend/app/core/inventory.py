@@ -2,13 +2,36 @@
 
 This lets us show real groups + hosts in the UI (so `--limit` is a dropdown of
 known names, not a free-text field where typos go silent).
+
+Parsing is a *display* operation reachable with the `read` capability (and fired
+automatically when the Inventory tab opens). Ansible treats an **executable**
+inventory file as a dynamic-inventory script and runs it — so pointing this at a
+crafted, executable file in an imported project would execute arbitrary code as
+the app user, outside run isolation and below the `run`/`operator` trust boundary
+the rest of the app enforces. We refuse executable sources here; genuine dynamic
+inventories still work at *run* time (ansible-runner in its own subprocess), which
+is already gated by `run` and the optional sandbox.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from ansible.inventory.manager import InventoryManager
 from ansible.parsing.dataloader import DataLoader
+
+
+def _reject_executable(source: Path, inventory_rel: str) -> None:
+    """Refuse an executable inventory source: a file Ansible would run as a script,
+    or a directory holding one. Static INI/YAML inventories are never executable."""
+    candidates = [source]
+    if source.is_dir():
+        candidates += [p for p in source.iterdir() if p.is_file()]
+    for p in candidates:
+        if p.is_file() and os.access(p, os.X_OK):
+            raise ValueError(
+                f"refusing to parse an executable inventory source "
+                f"(dynamic-inventory scripts are not previewed): {inventory_rel}")
 
 
 def parse(project_root: Path, inventory_rel: str) -> dict:
@@ -23,6 +46,7 @@ def parse(project_root: Path, inventory_rel: str) -> dict:
         raise ValueError(f"inventory path escapes project: {inventory_rel}") from exc
     if not source.exists():
         raise FileNotFoundError(f"inventory not found: {inventory_rel}")
+    _reject_executable(source, inventory_rel)
 
     loader = DataLoader()
     manager = InventoryManager(loader=loader, sources=[str(source)])

@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -80,7 +80,7 @@ _FIELD_TO_KEY = {
 
 
 @router.put("/config")
-async def update_config(payload: AIConfigIn):
+async def update_config(payload: AIConfigIn, request: Request = None):  # type: ignore[assignment]
     if payload.provider is not None and payload.provider not in ("", "auto", "anthropic", "openai", "ollama"):
         raise HTTPException(400, "provider must be one of: auto, anthropic, openai, ollama, or empty")
     if payload.timeout_seconds is not None:
@@ -88,11 +88,22 @@ async def update_config(payload: AIConfigIn):
             int(payload.timeout_seconds)
         except ValueError:
             raise HTTPException(400, "timeout_seconds must be an integer")
+    changed: list[str] = []
     for field, key in _FIELD_TO_KEY.items():
         value = getattr(payload, field, None)
         if value is None:
             continue
         await settings_store.set(key, value)
+        changed.append(field)
+    # Changing a provider key or endpoint decides who the app hands prompts (and
+    # any project context) to, so record that it happened and by whom — never the
+    # value, which may be a secret.
+    if changed:
+        from app.core import audit
+        user_id = getattr(getattr(request, "state", None), "user", None)
+        await audit.record(audit.ADMIN_AI_CONFIG, "ai.config",
+                           user_id=getattr(user_id, "id", None),
+                           detail=f"changed={sorted(changed)}")
     return await settings_store.public_dump()
 
 
@@ -284,8 +295,18 @@ def _make_get_run(project_id: str):
     return _get
 
 
+# Agent tools that change the project or reach outside it: each one that runs gets
+# an audit row. Read-only tools (read_file, search_*, lint, get_run, preview) are
+# left out — they inspect, they don't act.
+_AUDITED_AGENT_TOOLS = frozenset({
+    "write_file", "move", "mkdir", "galaxy_add", "delete", "run_playbook", "web_fetch",
+})
+
+
 @router.post("/agent")
-async def agent(payload: AgentIn):
+# `request` defaults to None so the route stays directly callable in tests; FastAPI
+# injects it over HTTP. Used only for audit attribution.
+async def agent(payload: AgentIn, request: Request = None):  # type: ignore[assignment]
     """Run the tool-using agent against a project. Read-only tools always work;
     mutating/destructive tools require the matching opt-in flag."""
     if not await ai.ai_enabled():
@@ -310,10 +331,32 @@ async def agent(payload: AgentIn):
     if payload.allow_confirm:
         levels.add(CONFIRM)
     try:
-        return await ai.run_project_agent(payload.goal, tools, allowed_levels=levels,
-                                          max_steps=max(1, min(payload.max_steps, 15)))
+        result = await ai.run_project_agent(payload.goal, tools, allowed_levels=levels,
+                                            max_steps=max(1, min(payload.max_steps, 15)))
     except Exception as e:
         raise HTTPException(500, f"agent failed: {e}")
+
+    await _audit_agent_steps(payload.project_id, result, request)
+    return result
+
+
+async def _audit_agent_steps(project_id: str, result: dict, request: Request | None) -> None:
+    """Record one audit row per state-changing tool the agent actually ran."""
+    from app.core import audit
+
+    user_id = getattr(getattr(request, "state", None), "user", None)
+    user_id = getattr(user_id, "id", None)
+    for step in (result or {}).get("steps", []):
+        tool = str(step.get("tool", ""))
+        if tool not in _AUDITED_AGENT_TOOLS:
+            continue
+        args = step.get("args") or {}
+        obs = step.get("observation") or {}
+        target = str(args.get("path") or args.get("playbook") or args.get("name")
+                     or args.get("src") or project_id)
+        await audit.record(f"agent.{tool}", target, user_id=user_id,
+                           detail=f"project={project_id} args={json.dumps(args, default=str)[:200]}",
+                           ok=("error" not in obs))
 
 
 class NarratePlanIn(BaseModel):

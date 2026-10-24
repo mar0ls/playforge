@@ -160,7 +160,14 @@ def import_directory(name: str, source: Path) -> ProjectPaths:
 
     project_id = _new_id()
     root = _project_root(project_id)
-    shutil.copytree(source, root, dirs_exist_ok=False, symlinks=False, ignore=_import_ignore)
+    # symlinks=True copies links *as links*, never dereferencing them. With
+    # symlinks=False a source tree (a local path, or a cloned repo) containing a
+    # link like `secrets -> /data/master.key` or `-> /etc/shadow` would have the
+    # link's *target content* copied into the project, where it is then readable
+    # through the Files API by anyone with `read`. Preserving the link instead
+    # keeps _resolve_safe() in charge: it refuses any path that resolves outside
+    # the project, so a dangling or escaping link simply can't be read or written.
+    shutil.copytree(source, root, dirs_exist_ok=False, symlinks=True, ignore=_import_ignore)
 
     repo = Repo.init(root)
     repo.index.add([str(p.relative_to(root)) for p in root.rglob("*")

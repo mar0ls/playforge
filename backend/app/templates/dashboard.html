@@ -96,7 +96,7 @@
 
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function dashboard() {
   return {
     stats: {}, recent: [], sys: {},

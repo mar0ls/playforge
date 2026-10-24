@@ -186,7 +186,7 @@
   </div>
 
 </section>
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function settingsPage() {
   return {
     ai: {enabled: false, model: ""},

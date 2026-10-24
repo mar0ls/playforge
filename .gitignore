@@ -29,3 +29,12 @@ playbooks/
 # (assets/hero.jpg, static/img/favicon.png, static/img/mark.png)
 assets/logo1.png
 assets/background_p.png
+
+# docs/threat-model: generated, not checked in -- see its README
+docs/threat-model/.venv/
+docs/threat-model/__pycache__/
+docs/threat-model/*.json
+docs/threat-model/*.svg
+docs/threat-model/*.dot
+docs/threat-model/*.puml
+docs/threat-model/summary.md

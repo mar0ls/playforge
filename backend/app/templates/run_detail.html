@@ -212,7 +212,7 @@
 
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function runDetail(projectId, runId) {
   return {
     projectId, runId, run: null, loaded: false,

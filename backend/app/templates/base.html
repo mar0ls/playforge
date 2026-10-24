@@ -6,7 +6,7 @@
   <title>{% block title %}Playforge{% endblock %}</title>
   <link rel="icon" type="image/png" href="/static/img/favicon.png">
   <meta name="csrf-token" content="{{ request.state.csrf_token }}">
-  <script>
+  <script nonce="{{ request.state.csp_nonce }}">
     // One wrapper instead of a token argument at ~97 fetch call sites. Only
     // same-origin, state-changing requests get the header: a token must never
     // travel to a third party, and reads are not checked server-side anyway.
@@ -106,6 +106,9 @@
       {% if request.state.user and request.state.user.role == 'admin' %}
       <a href="/users" class="{% if active_nav == 'users' %}active{% endif %}">
         <i class="icon" data-lucide="users"></i> Users
+      </a>
+      <a href="/audit" class="{% if active_nav == 'audit' %}active{% endif %}">
+        <i class="icon" data-lucide="scroll-text"></i> Audit log
       </a>
       {% endif %}
       <a href="/settings" class="{% if active_nav == 'settings' %}active{% endif %}">
@@ -256,7 +259,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
   document.addEventListener("DOMContentLoaded", () => lucide.createIcons());
   document.addEventListener("alpine:initialized", () => lucide.createIcons());
 

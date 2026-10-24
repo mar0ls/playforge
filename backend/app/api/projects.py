@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from git import Repo, GitCommandError
@@ -33,6 +33,53 @@ from app.models.db import SessionLocal, Project, Run, Credential
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+# Git transports that reach a remote host over the network. Everything else —
+# `ext::`/`fd::` transport helpers (which run an arbitrary command), `file://`
+# and bare local paths (which clone from the *server's* own filesystem) — is
+# refused: a clone URL is attacker-influenced input that git otherwise turns into
+# code execution or local-file disclosure on the app host.
+_ALLOWED_CLONE_SCHEMES = ("http", "https", "ssh", "git")
+
+
+def _validate_clone_url(url: str) -> None:
+    """Refuse a git clone/remote URL that isn't a plain network remote."""
+    head = url.split("/", 1)[0]
+    if "::" in head:
+        raise HTTPException(400, "git transport helpers (e.g. ext::) are not allowed")
+    scheme = urlparse(url).scheme.lower()
+    if scheme:
+        if scheme not in _ALLOWED_CLONE_SCHEMES:
+            raise HTTPException(
+                400, f"unsupported URL scheme '{scheme}'; use one of "
+                     f"{', '.join(_ALLOWED_CLONE_SCHEMES)}")
+        return
+    # No scheme: accept only scp-like SSH syntax (user@host:path), not a local path.
+    if "@" in head and ":" in head:
+        return
+    raise HTTPException(400, "url must be an http(s)/ssh/git remote, not a local path")
+
+
+# Bounds on ZIP import, so a single upload can't exhaust the data volume:
+# a compressed-size cap on the wire, an expanded-size cap, and an entry-count
+# cap — the three dimensions a zip bomb plays with.
+_MAX_ZIP_UPLOAD = 100 * 1024 * 1024        # 100 MiB on the wire
+_MAX_ZIP_UNCOMPRESSED = 500 * 1024 * 1024  # 500 MiB once expanded
+_MAX_ZIP_ENTRIES = 20_000
+
+
+def _copy_capped(src, dst, limit: int) -> None:
+    """Stream `src` to open file `dst`, aborting if it exceeds `limit` bytes."""
+    written = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            break
+        written += len(chunk)
+        if written > limit:
+            raise HTTPException(413, f"upload exceeds {limit // (1024 * 1024)} MiB limit")
+        dst.write(chunk)
 
 
 class ProjectIn(BaseModel):
@@ -98,6 +145,7 @@ async def import_git(payload: ImportGitIn):
     url = (payload.url or "").strip()
     if not url:
         raise HTTPException(400, "url is required")
+    _validate_clone_url(url)
 
     auth_url = url
     if payload.username and payload.token:
@@ -179,10 +227,18 @@ async def import_zip(name: str = Form(...), description: str = Form(""), upload:
     with tempfile.TemporaryDirectory() as tmp:
         zip_path = Path(tmp) / "incoming.zip"
         with zip_path.open("wb") as out:
-            shutil.copyfileobj(upload.file, out)
+            _copy_capped(upload.file, out, _MAX_ZIP_UPLOAD)
         extract_dir = Path(tmp) / "extracted"
         extract_dir.mkdir()
         with zipfile.ZipFile(zip_path) as zf:
+            infos = zf.infolist()
+            if len(infos) > _MAX_ZIP_ENTRIES:
+                raise HTTPException(400, f"zip has too many entries (>{_MAX_ZIP_ENTRIES})")
+            # The declared sizes are the attacker's own numbers, but a zip bomb
+            # still has to claim its expanded size here — a small archive that
+            # decompresses to gigabytes is refused before a single byte is written.
+            if sum(i.file_size for i in infos) > _MAX_ZIP_UNCOMPRESSED:
+                raise HTTPException(400, f"zip expands past {_MAX_ZIP_UNCOMPRESSED // (1024 * 1024)} MiB limit")
             for member in zf.namelist():
                 # Block path traversal in zip entries. `is_relative_to`, not a
                 # string prefix: `extracted_evil` starts with `extracted`, so a
@@ -456,6 +512,9 @@ async def git_status(project_id: str):
 
 @router.post("/{project_id}/git/remote")
 async def git_set_remote(project_id: str, payload: GitRemoteIn):
+    # A stored remote is reused verbatim by push/pull, so the same transports that
+    # make an import URL dangerous (ext::, file://) are dangerous here too.
+    _validate_clone_url((payload.url or "").strip())
     try:
         storage.set_remote(project_id, payload.url)
         return storage.git_info(project_id)
@@ -617,7 +676,11 @@ def add_inventory_host(project_id: str, payload: InventoryHostIn):
         raise HTTPException(404, str(e))
 
     text = hosts_file.read_text()
-    rel = str(hosts_file.relative_to(paths.root))
+    # resolve_hosts_file() returns a symlink-resolved path, so compare against the
+    # equally-resolved root — otherwise relative_to() raises when the data dir
+    # lives behind a symlink (macOS /var, bind mounts). Same fix storage.write_file
+    # already carries.
+    rel = str(hosts_file.relative_to(paths.root.resolve()))
     name, group = payload.name.strip(), payload.group.strip()
 
     if is_yaml_inventory(text):
@@ -717,13 +780,21 @@ async def vault_decrypt(project_id: str, payload: VaultFileIn):
 
 
 @router.post("/{project_id}/vault/view")
-async def vault_view(project_id: str, payload: VaultFileIn):
+async def vault_view(project_id: str, payload: VaultFileIn, request: Request = None):  # type: ignore[assignment]
+    """Decrypt a vault file and return its plaintext to the UI. This is the one
+    operation that hands a stored secret back to a human, so it is audited."""
     _paths, target = _project_file(project_id, payload.path)
     password = await _resolve_vault_password(payload.credential_id)
+    from app.core import audit
+    user_id = getattr(getattr(request, "state", None), "user", None)
     try:
         plaintext = await asyncio.to_thread(vault.view_file, target, password)
     except vault.VaultError as e:
+        await audit.record(audit.SECRET_VAULT_VIEW, f"{project_id}:{payload.path}",
+                           user_id=getattr(user_id, "id", None), ok=False)
         raise HTTPException(400, str(e))
+    await audit.record(audit.SECRET_VAULT_VIEW, f"{project_id}:{payload.path}",
+                       user_id=getattr(user_id, "id", None))
     return {"path": payload.path, "plaintext": plaintext}
 
 

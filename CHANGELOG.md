@@ -3,6 +3,50 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [1.1.0] — 2026-10-24
+
+### Security
+- **Inventory parsing no longer executes code.** Ansible runs an *executable*
+  inventory file as a dynamic-inventory script. `GET /api/projects/{id}/inventory`
+  is a `read`-capability display call (fired automatically when the Inventory tab
+  opens), so a crafted executable file in an imported project was arbitrary code
+  execution as the app user — outside run isolation and below the `run`/`operator`
+  trust boundary. The display parser now refuses an executable inventory source
+  (file, or a directory holding one); genuine dynamic inventory still works at
+  *run* time, where it belongs. (`core/inventory.py`, `tests/test_inventory.py`)
+- **Git clone/remote URLs are allowlisted.** `import-git` and `set-remote` passed
+  a URL straight to git, so `ext::`/`fd::` transport helpers (arbitrary command
+  execution) and `file://` / bare local paths (clone from the server's own
+  filesystem) were reachable. Only `http(s)`/`ssh`/`git` network remotes are now
+  accepted. (`api/projects.py`, `tests/test_projects_api_import.py`)
+- **ZIP import is bounded.** The upload, its declared expanded size and its entry
+  count are now capped, so a zip bomb can't exhaust the data volume.
+- **Project import preserves symlinks instead of dereferencing them.** A source
+  tree with a link to `/etc/shadow` or `master.key` used to have the target's
+  *content* copied into the project, readable through the Files API; the link is
+  now kept as a link and `_resolve_safe` refuses to read outside the project.
+- **CSP drops `'unsafe-inline'` from `script-src`.** Every inline `<script>` now
+  carries a per-request nonce, so an injected script tag without it can't run.
+  `'unsafe-eval'` stays — Alpine/htmx evaluate with `new Function`, which has no
+  nonce equivalent. (`main.py`, `tests/test_csp.py`)
+
+### Added
+- **Audit log** for the repudiation gaps `Run.user_id` didn't cover: every
+  state-changing AI-agent tool call, every read of decrypted credential material
+  (vault reveal, credentials pulled into a run), and admin actions (account
+  create/update/delete, AI-provider/key changes) are recorded — attributed to the
+  acting user where there is one, never storing the secret value. The log is
+  capped and pruned, served read-only at **`/audit`** (admin) and `GET /api/audit`.
+  (`core/audit.py`, `api/audit.py`, `templates/audit.html`, `tests/test_audit.py`)
+- **Threat model as code** (`docs/threat-model/`, pytm) — the trust boundaries of
+  `SECURITY.md` as a versioned, diffable model, rendered to a DFD + summary by a
+  new informational CI job.
+
+### Fixed
+- Adding an inventory host no longer crashes when the data dir lives behind a
+  symlink (`relative_to` against an unresolved root — the same fix `write_file`
+  already carried).
+
 ## [1.0.1] — 2026-10-02
 
 ### Security
