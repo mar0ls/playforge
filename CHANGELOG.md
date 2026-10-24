@@ -3,7 +3,7 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
-## [Unreleased]
+## [1.1.1] — 2026-10-24
 
 ### Changed
 - **The baked Ansible collections are pinned to exact versions**
@@ -14,6 +14,11 @@ All notable changes to Playforge are documented here. The format loosely follows
   set that shipped in 1.1.0; closes the last gap in "the same tag builds the same
   image" (pip and Monaco were already pinned). No Dependabot for Galaxy, so these
   are bumped by hand.
+
+### Dependencies
+- Bumped via Dependabot (lock re-hashed): `gitpython` 3.1.62 → 3.2.1,
+  `filelock` 3.32.2 → 4.2.1, `certifi` 2026.7.22 → 2026.10.19 (CA refresh),
+  `black` 26.5.1 → 26.10.1 (dev).
 
 ## [1.1.0] — 2026-10-24
 
