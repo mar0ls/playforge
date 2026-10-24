@@ -3,6 +3,18 @@
 All notable changes to Playforge are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are tagged in git.
 
+## [Unreleased]
+
+### Changed
+- **The baked Ansible collections are pinned to exact versions**
+  (`backend/collections.yml`). They were installed as "latest at build time", so
+  two builds of one git tag could ship different modules, a new collection release
+  could need a newer `ansible-core` and break the build, and the assistant's
+  `ansible-doc`-backed layer could drift between untouched builds. Pinned to the
+  set that shipped in 1.1.0; closes the last gap in "the same tag builds the same
+  image" (pip and Monaco were already pinned). No Dependabot for Galaxy, so these
+  are bumped by hand.
+
 ## [1.1.0] — 2026-10-24
 
 ### Security
