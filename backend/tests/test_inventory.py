@@ -60,3 +60,30 @@ def test_parse_path_escape_rejected(tmp_path):
 def test_parse_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         parse(tmp_path, "nope")
+
+
+def test_parse_refuses_executable_inventory_script(tmp_path):
+    """An executable inventory file is a dynamic-inventory *script* Ansible would
+    run. Parsing is a read-capability display op, so it must refuse rather than
+    execute (regression for the inventory-parse RCE)."""
+    marker = tmp_path / "MARKER"
+    inv = tmp_path / "hosts"
+    inv.write_text(
+        "#!/bin/sh\n"
+        f"touch {marker}\n"
+        "echo '{\"all\": {\"hosts\": [\"h1\"]}}'\n"
+    )
+    inv.chmod(0o755)
+    with pytest.raises(ValueError, match="executable"):
+        parse(tmp_path, "hosts")
+    assert not marker.exists(), "inventory script was executed during parse"
+
+
+def test_parse_refuses_executable_in_directory(tmp_path):
+    d = tmp_path / "inventories" / "production"
+    d.mkdir(parents=True)
+    script = d / "hosts"
+    script.write_text("#!/bin/sh\necho '{}'\n")
+    script.chmod(0o755)
+    with pytest.raises(ValueError, match="executable"):
+        parse(tmp_path, "inventories/production")

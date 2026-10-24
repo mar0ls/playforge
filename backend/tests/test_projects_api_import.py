@@ -234,3 +234,52 @@ async def test_a_sibling_named_entry_is_rejected():
         await import_zip(name="p", description="", upload=_upload(data))
     assert exc.value.status_code == 400
     assert "unsafe path in zip" in exc.value.detail
+
+
+# ---------- import-git URL allowlist (no RCE / local-file disclosure) -------
+
+@pytest.mark.parametrize("url", [
+    "ext::sh -c 'touch /tmp/pwned'",   # transport helper = arbitrary command
+    "file:///data",                    # clone from the server's own filesystem
+    "/data/projects",                  # bare local path
+    "fd::17",                          # another transport helper
+])
+async def test_import_git_refuses_dangerous_urls(url):
+    from app.api.projects import import_git, ImportGitIn
+    with pytest.raises(HTTPException) as exc:
+        await import_git(ImportGitIn(url=url))
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/org/repo.git",
+    "http://gitea.local:3000/org/repo.git",
+    "ssh://git@host/org/repo.git",
+    "git@github.com:org/repo.git",     # scp-like SSH syntax
+    "git://host/org/repo.git",
+])
+def test_validate_clone_url_accepts_network_remotes(url):
+    from app.api.projects import _validate_clone_url
+    _validate_clone_url(url)  # must not raise
+
+
+async def test_set_remote_refuses_dangerous_urls():
+    from app.api.projects import git_set_remote, GitRemoteIn
+    with pytest.raises(HTTPException) as exc:
+        await git_set_remote("whatever", GitRemoteIn(url="ext::sh -c id"))
+    assert exc.value.status_code == 400
+
+
+# ---------- import-zip resource bounds (zip bomb / disk fill) ---------------
+
+async def test_a_zip_claiming_a_huge_expansion_is_rejected():
+    """A small archive whose entries declare gigabytes of expanded content is
+    refused before extraction, so it can't fill the data volume."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # One entry of highly-compressible data larger than the expand cap.
+        zf.writestr("big.txt", b"\0" * (600 * 1024 * 1024))
+    with pytest.raises(HTTPException) as exc:
+        await import_zip(name="p", description="", upload=_upload(buf.getvalue()))
+    assert exc.value.status_code == 400
+    assert "limit" in exc.value.detail

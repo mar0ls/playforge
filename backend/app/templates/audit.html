@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Audit log — Playforge{% endblock %}
+{% block breadcrumb %}<span>Audit log</span>{% endblock %}
+{% block content %}
+<section x-data="auditPage()" x-init="load()">
+
+  <div class="card">
+    <div class="card-header">
+      <h3>Audit log</h3>
+      <div class="row-actions">
+        <select x-model="action" @change="load()">
+          <option value="">All actions</option>
+          <option value="agent.">Agent actions</option>
+          <option value="secret.">Secret reads</option>
+          <option value="admin.">Admin changes</option>
+        </select>
+        <button class="btn-ghost btn-sm" @click="load()">
+          <i class="icon" data-lucide="refresh-cw"></i> Refresh
+        </button>
+      </div>
+    </div>
+
+    <table class="table">
+      <thead>
+        <tr><th>When (UTC)</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th><th></th></tr>
+      </thead>
+      <tbody>
+        <template x-for="e in events" :key="e.id">
+          <tr>
+            <td class="text-sm muted" x-text="e.at ? e.at.replace('T',' ').slice(0,19) : ''"></td>
+            <td x-text="e.username || (e.user_id !== null ? ('#' + e.user_id) : '—')"
+                :class="e.username ? '' : 'muted'"></td>
+            <td><span class="badge" x-text="e.action"></span></td>
+            <td class="text-sm" x-text="e.target"></td>
+            <td class="text-sm muted" x-text="e.detail"></td>
+            <td>
+              <span x-show="e.ok" class="ok" title="succeeded">✓</span>
+              <span x-show="!e.ok" class="fail" title="failed">✗</span>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="!events.length">
+          <td colspan="6" class="muted" x-text="error || 'No audit events recorded yet.'"></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="text-sm muted" style="margin:.75rem 0 0;">
+      Records agent actions, reads of decrypted credential material, and account /
+      AI-provider changes. The user column is empty for events from single-password
+      or no-login mode, where there is no account to attribute. Oldest entries are
+      pruned once the log passes its size cap.
+    </p>
+  </div>
+</section>
+
+<script nonce="{{ request.state.csp_nonce }}">
+function auditPage() {
+  return {
+    events: [], action: "", error: "",
+
+    async load() {
+      this.error = "";
+      const q = this.action ? `?action=${encodeURIComponent(this.action)}` : "";
+      // The action filter offers prefixes (agent./secret./admin.); the API matches
+      // an exact action, so expand a prefix client-side after a broad fetch.
+      const r = await fetch(`/api/audit?limit=500`);
+      if (!r.ok) {
+        this.events = [];
+        this.error = r.status === 403 ? "Admin only." : `Failed to load (${r.status}).`;
+        return;
+      }
+      let rows = await r.json();
+      if (this.action) rows = rows.filter(e => e.action.startsWith(this.action));
+      this.events = rows;
+      queueMicrotask(() => window.lucide && lucide.createIcons());
+    },
+  };
+}
+</script>
+{% endblock %}

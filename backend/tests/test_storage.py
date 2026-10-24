@@ -299,3 +299,27 @@ def test_resolve_safe_rejects_root_itself():
             storage.write_file(p.project_id, "", "x")
     finally:
         storage.delete_project(p.project_id)
+
+
+def test_import_preserves_symlinks_without_leaking_their_targets(tmp_path):
+    """A symlink in the source tree is copied as a link, not dereferenced, so a
+    link pointing at a secret outside the project doesn't smuggle that secret's
+    content into the importable project (and _resolve_safe then blocks reading it)."""
+    secret = tmp_path / "outside-secret"
+    secret.write_text("TOP SECRET MASTER KEY")
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "playbooks").mkdir()
+    (src / "playbooks" / "site.yml").write_text("---\n- hosts: all\n  tasks: []\n")
+    (src / "leak").symlink_to(secret)
+
+    paths = storage.import_directory("imported", src)
+    try:
+        link = paths.root / "leak"
+        assert link.is_symlink(), "symlink was dereferenced on import"
+        assert link.read_text() != "TOP SECRET MASTER KEY" or link.is_symlink()
+        # The Files API refuses to read a path that resolves outside the project.
+        with pytest.raises(StorageError):
+            storage.read_file(paths.project_id, "leak")
+    finally:
+        storage.delete_project(paths.project_id)

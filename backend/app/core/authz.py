@@ -45,6 +45,8 @@ _rule(_ANY, rf"^/api/projects/{_ID}/vault/", "secrets")
 
 # --- users and app configuration ---------------------------------------------
 _rule(_ANY, r"^/api/users", "admin")
+# The audit log names who read secrets and what the agent did, so it is admin-only.
+_rule(_ANY, r"^/api/audit", "admin")
 _rule(_ANY, r"^/api/ai/config", "admin")
 _rule(_ANY, r"^/api/ai/probe", "admin")
 # Clearing run history destroys the audit trail, so it is not a write.

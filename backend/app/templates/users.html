@@ -86,7 +86,7 @@
   </div>
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function usersPage() {
   return {
     users: [], me: {{ current_user_id or 'null' }}, showForm: false, error: "",

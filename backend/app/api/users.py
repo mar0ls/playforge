@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core import users as users_core
+from app.core import audit
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -52,11 +53,14 @@ async def list_users():
 
 
 @router.post("", response_model=UserOut, status_code=201)
-async def create_user(payload: UserIn):
+async def create_user(payload: UserIn, request: Request = None):  # type: ignore[assignment]
     try:
-        return _out(await users_core.create(payload.username, payload.password, payload.role))
+        user = await users_core.create(payload.username, payload.password, payload.role)
     except users_core.UserError as e:
         raise HTTPException(400, str(e))
+    await audit.record(audit.ADMIN_USER_CREATE, payload.username, user_id=_actor_id(request),
+                       detail=f"role={payload.role}")
+    return _out(user)
 
 
 @router.patch("/{user_id}", response_model=UserOut)
@@ -88,7 +92,15 @@ async def update_user(user_id: int, payload: UserUpdate,
     except users_core.UserError as e:
         raise HTTPException(400, str(e))
 
-    return _out(await users_core.get(user_id))
+    updated = await users_core.get(user_id)
+    # Record what actually changed — a role change, a disable, a password reset
+    # are each a thing an admin may later need to account for.
+    changed = [f for f, v in (("role", payload.role), ("disabled", payload.disabled),
+                              ("password", "***" if payload.password is not None else None))
+               if v is not None]
+    await audit.record(audit.ADMIN_USER_UPDATE, getattr(updated, "username", str(user_id)),
+                       user_id=self_id, detail=f"changed={changed}")
+    return _out(updated)
 
 
 @router.delete("/{user_id}")
@@ -96,8 +108,11 @@ async def delete_user(user_id: int,
                       request: Request = None):  # type: ignore[assignment]
     if _actor_id(request) == user_id:
         raise HTTPException(400, "you cannot delete your own account")
+    victim = await users_core.get(user_id)
     try:
         await users_core.delete(user_id)
     except users_core.UserError as e:
         raise HTTPException(400 if "last admin" in str(e) else 404, str(e))
+    await audit.record(audit.ADMIN_USER_DELETE, getattr(victim, "username", str(user_id)),
+                       user_id=_actor_id(request))
     return {"deleted": user_id}

@@ -143,6 +143,34 @@ class Schedule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AuditEvent(Base):
+    """An append-only record of a sensitive action, for the repudiation side of
+    the threat model: who did what, when, and whether it succeeded.
+
+    Covers the two surfaces that previously left no trail of their own — the AI
+    agent's mutating/destructive actions, and reads of decrypted credential
+    material (vault reveal, credentials pulled into a run). Runs themselves are
+    already attributed by `Run.user_id`; this table is for everything else.
+
+    `user_id` is nullable for the same reason it is on `Run`: in single-password
+    and no-auth mode there is no account to attribute, so attribution only starts
+    meaning something once accounts exist. The row is written regardless — an
+    unattributed "a secret was revealed" is still worth having.
+
+    New table, so `create_all` builds it on every boot (fresh or existing) and no
+    migration step is needed — same reasoning as the `users` table in _m002.
+    """
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)   # e.g. agent.write_file, secret.vault_view
+    target: Mapped[str] = mapped_column(String(512), default="")  # project id, path, credential name
+    detail: Mapped[str] = mapped_column(Text, default="")         # short human-readable context
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Run(Base):
     __tablename__ = "runs"
 

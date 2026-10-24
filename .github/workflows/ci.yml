@@ -96,3 +96,44 @@ jobs:
       - name: Type-check backend/app
         working-directory: backend
         run: python -m mypy app --config-file mypy.ini
+
+  # Validates docs/threat-model/model.py still runs and publishes the diagram and
+  # summary as a build artifact, so a reviewer can open them from the PR without a
+  # local pytm install. Informational only: it does not gate release or image —
+  # broken diagramming tooling is no reason to hold back a working build. A real
+  # gate is that the model must still parse (a stale trust assumption shows up as a
+  # diff on model.py in review).
+  threat-model:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install graphviz (renders the data-flow diagram)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz
+
+      - name: Install pytm
+        run: pip install -r docs/threat-model/requirements.txt
+
+      - name: Render diagram, sequence and summary
+        working-directory: docs/threat-model
+        run: |
+          python3 model.py --dfd | dot -Tsvg -o dfd.svg
+          python3 model.py --seq > sequence.puml
+          python3 model.py --json model.json
+          python3 summarize.py model.json > summary.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: threat-model
+          path: |
+            docs/threat-model/dfd.svg
+            docs/threat-model/sequence.puml
+            docs/threat-model/summary.md
+          retention-days: 30

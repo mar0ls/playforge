@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from app.api import schedules as schedules_api
 from app.api import library as library_api
 from app.api import environments as environments_api
 from app.api import users as users_api
+from app.api import audit as audit_api
 from app.core.scheduler import get_scheduler, load_all as load_schedules
 from app.core.config import settings
 from app.core import doc_index
@@ -62,30 +64,32 @@ app = FastAPI(title="Playforge", version=__version__, lifespan=lifespan)
 _PUBLIC_PREFIXES = ("/login", "/setup", "/static", "/health")
 
 
-# script-src is permissive on purpose. Every page template carries an inline
-# <script> block, and the vendored htmx builds handlers with Function()/eval(),
-# so 'unsafe-inline'/'unsafe-eval' are load-bearing — dropping them blanks the UI.
-# The value here is in the directives that cost nothing to enforce:
-#   connect-src 'self'  an injected script can't exfiltrate to another host
-#   frame-ancestors     clickjacking
-#   object-src/base-uri/form-action  plugin and base-tag injection, form hijack
-# script-src 'self' still blocks loading code from another origin, which is worth
-# having now that no asset comes from a CDN.
-_CSP = "; ".join([
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "frame-ancestors 'none'",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-])
+# script-src carries a per-request nonce (set in csrf_protect, rendered onto every
+# inline <script>), so 'unsafe-inline' is gone: an injected <script> without the
+# nonce no longer runs, which is the whole point of a CSP against reflected/stored
+# XSS. 'unsafe-eval' stays — Alpine evaluates its directives with `new Function`
+# and the vendored htmx builds handlers the same way, so removing it blanks the UI;
+# there is no nonce equivalent for eval. A browser that sees a nonce ignores
+# 'unsafe-inline' anyway (CSP3), so dropping it costs nothing and documents intent.
+# The rest are the directives that cost nothing to enforce: connect-src 'self' means
+# an injected script has nowhere to exfiltrate, and object/base-uri/form-action close
+# plugin, base-tag and form-hijack injection.
+def _csp(nonce: str) -> str:
+    return "; ".join([
+        "default-src 'self'",
+        f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    ])
+
 
 _SECURITY_HEADERS = {
-    "Content-Security-Policy": _CSP,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",          # for anything predating frame-ancestors
     "Referrer-Policy": "no-referrer",
@@ -220,6 +224,9 @@ async def csrf_protect(request: Request, call_next):
         nonce = csrf.new_nonce()
     # Templates render this into a meta tag; the page script sends it back.
     request.state.csrf_token = csrf.token_for(nonce)
+    # Fresh per request: templates stamp it onto every inline <script>, and
+    # security_headers names it in the CSP, so only our own inline scripts run.
+    request.state.csp_nonce = secrets.token_urlsafe(16)
 
     if request.method in _UNSAFE_METHODS:
         if _is_cross_site(request):
@@ -258,6 +265,12 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     for header, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
+    # CSP carries the per-request nonce set in csrf_protect. That middleware runs
+    # inside this one, so the nonce is present by here; fall back to a throwaway
+    # one for any response that bypassed it (nothing inline would match it, which
+    # is the safe default).
+    nonce = getattr(request.state, "csp_nonce", None) or secrets.token_urlsafe(16)
+    response.headers.setdefault("Content-Security-Policy", _csp(nonce))
     return response
 
 
@@ -284,6 +297,7 @@ app.include_router(schedules_api.router)
 app.include_router(library_api.router)
 app.include_router(environments_api.router)
 app.include_router(users_api.router)
+app.include_router(audit_api.router)
 
 
 @app.get("/health")
@@ -529,6 +543,13 @@ async def users_page(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     return templates.TemplateResponse(request, "settings.html", {"active_nav": "settings"})
+
+
+@app.get("/audit", response_class=HTMLResponse)
+async def audit_page(request: Request):
+    """Admin audit log. The API behind it (`/api/audit`) is admin-only; a non-admin
+    who reaches this page sees an empty table rather than a 403 on the page."""
+    return templates.TemplateResponse(request, "audit.html", {"active_nav": "audit"})
 
 
 @app.get("/schedules", response_class=HTMLResponse)

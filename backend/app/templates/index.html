@@ -46,7 +46,7 @@
   </template>
 </section>
 
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 function projectsPage() {
   return {
     projects: [], newName: "", zipFile: null,

@@ -56,6 +56,10 @@
     "required_body": [],
     "required_params": []
   },
+  "GET /api/audit": {
+    "required_body": [],
+    "required_params": []
+  },
   "GET /api/credentials": {
     "required_body": [],
     "required_params": []
