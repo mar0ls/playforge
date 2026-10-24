@@ -48,8 +48,19 @@ RUN pip install --require-hashes -r requirements-lock.txt
 # thus the assistant's RAG/anti-hallucination layer) knows the modules people
 # actually use (yum, ufw, authorized_key, ...) fully offline. See collections.yml.
 COPY collections.yml .
-RUN ansible-galaxy collection install -r collections.yml -p /usr/share/ansible/collections \
-    && chmod -R a+rX /usr/share/ansible/collections
+# galaxy.ansible.com serves intermittent 500s on the artifact download, which with
+# a single attempt turns a transient outage into a failed build (and a failed
+# release). Retry with a linear backoff; fail the build only if every attempt does.
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+        if ansible-galaxy collection install -r collections.yml -p /usr/share/ansible/collections; then \
+            ok=1; break; \
+        fi; \
+        echo "ansible-galaxy install failed (attempt ${attempt}/5); retrying in $((attempt * 10))s"; \
+        sleep "$((attempt * 10))"; \
+    done; \
+    [ "${ok:-}" = 1 ]; \
+    chmod -R a+rX /usr/share/ansible/collections
 ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections
 
 # Monaco, vendored so the editor works with no internet (the rest of the frontend
