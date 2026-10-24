@@ -6,11 +6,26 @@
 # BM25 index + the anti-hallucination check) sees the modules people actually use,
 # without any network access at run time.
 #
-# Adds ~620 modules (71 -> ~690) and ~36 MB. Pin or extend as needed; rebuild the
-# image (`docker compose build`) to apply.
+# Adds ~620 modules (71 -> ~690) and ~36 MB. Rebuild the image
+# (`docker compose build`) to apply.
+#
+# Versions are pinned so the same git tag builds the same image — the same promise
+# pip (hashed lock) and Monaco (sha256) already keep. Unpinned, `ansible-galaxy`
+# installs whatever Galaxy serves as latest at build time, so two builds of one tag
+# could ship different modules, a new release could need a newer ansible-core and
+# break the build, and the assistant's `ansible-doc`-backed RAG/anti-hallucination
+# layer could change behaviour between builds nobody touched. There is no Dependabot
+# for Galaxy, so these are reviewed and bumped by hand (like the pip pins): to move
+# one, set the version here, rebuild, and confirm `ansible-galaxy collection list`
+# resolves it against the image's ansible-core.
 collections:
   - name: community.general
+    version: "13.5.0"
   - name: ansible.posix
+    version: "2.2.2"
   - name: community.crypto
+    version: "3.5.1"
   - name: ansible.windows
+    version: "3.9.1"
   - name: community.docker
+    version: "5.4.0"

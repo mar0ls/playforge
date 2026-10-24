@@ -278,7 +278,8 @@ floor CI enforces (`make coverage` runs the same gate locally) — see
   is the only thing that reaches the internet when you turn it on.
 - **Reproducible builds**: Python deps install from `backend/requirements-lock.txt`
   with `--require-hashes`; Monaco is fetched at build time against a pinned
-  SHA-256. The same git tag produces the same image.
+  SHA-256; the baked Ansible collections are pinned to exact versions in
+  `backend/collections.yml`. The same git tag produces the same image.
 - **No heavy infra**: SQLite (WAL mode), in-process scheduler, direct runner.
   One container.
 - Third-party components are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
