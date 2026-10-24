@@ -42,6 +42,14 @@ All notable changes to Playforge are documented here. The format loosely follows
   `SECURITY.md` as a versioned, diffable model, rendered to a DFD + summary by a
   new informational CI job.
 
+### Changed
+- **The image build retries the Galaxy collection install.** `ansible-galaxy
+  collection install` ran once, so a transient `HTTP 500` from
+  galaxy.ansible.com's artifact backend failed the whole build (and a release).
+  It now retries five times with a linear backoff and fails only if every attempt
+  does. (A sustained Galaxy outage still can't be built through — that is theirs
+  to fix — but the common short blip no longer does.)
+
 ### Fixed
 - Adding an inventory host no longer crashes when the data dir lives behind a
   symlink (`relative_to` against an unresolved root — the same fix `write_file`
