@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+      - uses: cicd-sensor/cicd-sensor-action@2bc31a18949a77cd5f5bd452f24f00fbb507cdf6 # v0.0.41
 
       - uses: actions/checkout@v7
 
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+      - uses: cicd-sensor/cicd-sensor-action@2bc31a18949a77cd5f5bd452f24f00fbb507cdf6 # v0.0.41
 
       - uses: actions/checkout@v7
 
@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+      - uses: cicd-sensor/cicd-sensor-action@2bc31a18949a77cd5f5bd452f24f00fbb507cdf6 # v0.0.41
 
       - uses: actions/checkout@v7
 
@@ -107,11 +107,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66 # v0.0.38
+      - uses: cicd-sensor/cicd-sensor-action@2bc31a18949a77cd5f5bd452f24f00fbb507cdf6 # v0.0.41
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -129,7 +129,7 @@ jobs:
           python3 model.py --json model.json
           python3 summarize.py model.json > summary.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: threat-model
           path: |
